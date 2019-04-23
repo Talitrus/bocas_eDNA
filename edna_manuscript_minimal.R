@@ -404,3 +404,11 @@ GISD[which(GISD$Species %in% edna_species_tibble$species),]
 edna_species_tibble[which(edna_species_tibble$species %in% GISD$Species),]
 
 summary(curated_edna.ps.spp %>% get_sample(names(which(edna_species_names == "Mus musculus"))) > 0) # Example of how to inspect how many samples have Mus musculus counts
+
+
+
+# Checking RLS data against Bocas spp db, GISD ----------
+# IN-PROGRESS, INCOMPLETE
+fish_check <- fish_tax %>% as_tibble() %>%
+  select(species) %>%
+  unique()
