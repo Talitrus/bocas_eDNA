@@ -409,6 +409,20 @@ summary(curated_edna.ps.spp %>% get_sample(names(which(edna_species_names == "Mu
 
 # Checking RLS data against Bocas spp db, GISD ----------
 # IN-PROGRESS, INCOMPLETE
-fish_check <- fish_tax %>% as_tibble() %>%
+fish_check <- fish_tax %>% 
+  as_tibble() %>%
+  filter(!is.na(species)) %>%
   select(species) %>%
   unique()
+
+
+fish_check_tsns <- get_tsn(fish_check$species)
+fish_check_accepted <- itis_acceptname(fish_check_tsns[!is.na(fish_check_tsns)])
+
+fish_species_tibble <- tibble(species = fish_check$species, tsn = fish_check_tsns, accepted_tsn = NA)
+fish_species_tibble$in_bocas_db_raw = fish_species_tibble$species %in% bocas_metazoans$genspec
+fish_species_tibble[!is.na(fish_check_tsns),"accepted_tsn"] <- fish_check_accepted$acceptedtsn
+
+fish_species_tibble$in_bocas_db_acctsn = if_else(!is.na(fish_species_tibble$accepted_tsn), fish_species_tibble$accepted_tsn %in% bocas_metazoans$accepted_tsn, NA)
+fish_species_tibble$acctsn_or_raw_in_bdb <- fish_species_tibble$in_bocas_db_acctsn | fish_species_tibble$in_bocas_db_raw
+# NOTE: Scarus iseri is written as Scarus iserti in the Bocas spp DB which is not an accepted name and is also not on ITIS, so this will need to be manually accounted for at this time.
