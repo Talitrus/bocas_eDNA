@@ -15,6 +15,13 @@ if (length(args)==0) {
   stop("More than one argument supplied. You should only supply one argument, which should be the number of cores allotted as an integer.")
 }
 
+# Flags ----------------------
+
+use_plotly_cloud <- FALSE # set this to TRUE to enable the use of `api_create` to make/update Plot.ly cloud figures.
+plotly_sharing_setting <- "secret" # Plot.ly cloud privacy setting for figures generated, only applicable if `use_plotly_cloud` == TRUE.
+use_h2o <- FALSE # Use `h2o` instead of the R `randomForest` package?
+use_h2o_grid_search <- FALSE # Use a full grid search instead of a single model for h2o, only applicable if `use_h2o` == TRUE.
+
 # Load libraries ------------------------
 
 library(phyloseq)
@@ -23,10 +30,14 @@ library(tidyverse)
 library(parallel)
 library(plotly)
 library(lubridate)
-library(randomForest)
 library(genefilter) # for the kOverA function
 library(taxize)
-library(rsample)
+if (use_h2o == TRUE) {
+  library(h2o)
+} else {
+  library(randomForest)
+}
+
 
 # Functions --------------
 vegan_otu <- function(physeq) { #convert phyloseq OTU table into vegan OTU matrix
@@ -45,10 +56,6 @@ filter_taxa_to_other <- function(physeq, filterFunc, merged_taxon_name = "Other 
   return(new_physeq)
 }
 
-# Flags ----------------------
-
-use_plotly_cloud <- FALSE # set this to TRUE to enable the use of `api_create` to make/update Plot.ly cloud figures.
-plotly_sharing_setting <- "secret" # Plot.ly cloud privacy setting for figures generated, not used if `use_plotly_cloud` is FALSE.
 
 # Set file locations -----------------------
 
@@ -172,36 +179,107 @@ if (use_plotly_cloud == TRUE) {
 
 # Random Forest habitat classification --------------------
 
+# Pre-processing the input data
 curated_edna_meta.tr.f <- meta_curated_bocas_edna.ps.tr %>%
   filter_taxa(filterfun(kOverA(5,5e-5)), TRUE) #filter for taxa with approximately at least 5 reads per sample in at least 5 samples)
-selected_env <- sample_data(curated_edna_meta.tr.f) %>%
+selected_env <- sample_data(curated_edna_meta.tr.f) %>% # column containing the class information (Ecosystem, in this case)
   select(Ecosystem)
 meta_comb <- cbind(otu_table(curated_edna_meta.tr.f),selected_env) #combined dataframe with OTUs plus the Ecosystem column.
-meta_rf <- randomForest(meta_comb[,1:(ncol(meta_comb)-1)], meta_comb[,ncol(meta_comb)], ntree = 2000, importance = TRUE, proximity = TRUE, mtry = 200)
-raw_importance <- importance(meta_rf) %>% as.data.frame() %>% rownames_to_column(var = "SHA1") %>% as_tibble() # Feature importance
 
-meta_imp_table <- raw_importance %>% # Appending taxonomy information
-  mutate(
-    Superkingdom = as.character(tax[raw_importance$SHA1,"Superkingdom"]),
-    Kingdom = as.character(tax[raw_importance$SHA1,"Kingdom"]), 
-    Phylum = as.character(tax[raw_importance$SHA1,"Phylum"]),
-    Class = as.character(tax[raw_importance$SHA1,"Class"]),
-    Order = as.character(tax[raw_importance$SHA1,"Order"]),
-    Family = as.character(tax[raw_importance$SHA1,"Family"]),
-    Genus = as.character(tax[raw_importance$SHA1,"Genus"]),
-    Species = as.character(tax[raw_importance$SHA1,"species"])
+if (use_h2o == FALSE) {
+  meta_rf <- randomForest(meta_comb[,1:(ncol(meta_comb)-1)], meta_comb[,ncol(meta_comb)], ntree = 2000, importance = TRUE, proximity = TRUE, mtry = 200)
+  raw_importance <- importance(meta_rf) %>% as.data.frame() %>% rownames_to_column(var = "SHA1") %>% as_tibble() # Feature importance
+  
+  meta_imp_table <- raw_importance %>% # Appending taxonomy information
+    mutate(
+      Superkingdom = as.character(tax[raw_importance$SHA1,"Superkingdom"]),
+      Kingdom = as.character(tax[raw_importance$SHA1,"Kingdom"]), 
+      Phylum = as.character(tax[raw_importance$SHA1,"Phylum"]),
+      Class = as.character(tax[raw_importance$SHA1,"Class"]),
+      Order = as.character(tax[raw_importance$SHA1,"Order"]),
+      Family = as.character(tax[raw_importance$SHA1,"Family"]),
+      Genus = as.character(tax[raw_importance$SHA1,"Genus"]),
+      Species = as.character(tax[raw_importance$SHA1,"species"])
     ) %>%
-  arrange(desc(MeanDecreaseAccuracy)) # Sort features by decreasing Mean Decrease in Accuracy
+    arrange(desc(MeanDecreaseAccuracy)) # Sort features by decreasing Mean Decrease in Accuracy
+}
+
+
+
 write_tsv(meta_imp_table, path = metazoan_taxa_importance_file_location)
 
-# Trying out training + testing data split for cross validation.
-eDNA_split <- initial_split(meta_comb, prop = 0.7, strata = 'Ecosystem')
-eDNA_training <- training(eDNA_split)
-eDNA_testing <- testing(eDNA_split)
+# H2o distributed random forest ----------------
 
-meta_rf_cv <- randomForest(x = eDNA_training[,1:(ncol(eDNA_training)-1)], y = eDNA_training[,ncol(eDNA_training)], xtest = eDNA_testing[,1:(ncol(eDNA_testing)-1)], ytest = eDNA_testing[,ncol(eDNA_testing)], ntree = 2000, importance = TRUE, proximity = TRUE, mtry = 200)
+if (use_h2o == TRUE) { # If h2o is set to be used instead of the `randomForest` package.
+  y <- "Ecosystem" # variable to be predicted
+  x <- setdiff(names(meta_comb), c(y, "Site")) # features / predictors
+  h2o.init() # originally run with a large max_mem_size (55g)
+  
+  eDNA_total.h2o <- as.h2o(meta_comb) # Load data into H2o
+  
+  if (use_h2o_grid_search == TRUE) { # H2O grid search of parameter space
+    eDNA_hypergrid <- list(
+      #ntrees = seq(400,2000, by = 800),
+      mtries = c(40,100,200,400,600,700),
+      sample_rate = c(0.6325, 0.70, 0.80),
+      min_rows = seq(1,5, by = 2),
+      max_depth = seq(10,40, by = 10)#,
+      #nbins = seq(10,20, by = 10)
+    )
+    
+    eDNA_grid_xval <- h2o.grid(
+      algorithm = "randomForest",
+      grid_id = "eDNArf_grid_xval",
+      ntrees = 1000,
+      x = x,
+      y = y,
+      training_frame = eDNA_total.h2o,
+      nfolds = 5, # k-fold cross-validation, k = 5
+      #fold_column = "Site", # cross-validation by sites, not working or estimated runtime << actual runtime
+      hyper_params = eDNA_hypergrid,
+      search_criteria = list(strategy = "Cartesian"),
+      balance_classes = TRUE # attempts to account for fewer cases in some classes (e.g. dock)
+    )
+    
+    eDNA_grid_performance <- h2o.getGrid( #remember to change the grid ID or make new code for the xval grid 
+      grid_id = "eDNArf_grid_xval",
+      sort_by = "logloss"
+    )
+    
+    model1 <- h2o.getModel(eDNA_grid_performance@model_ids[[1]]) # Best model, as determined by minimum logloss.
+    model1_perf <- h2o.performance(model = model1)
+    
+  } else { # Using the parameters from the best model from a previous grid search.
+    model1 <- h2o.randomForest(
+      x = x,
+      y = y,
+      training_frame = eDNA_total.h2o,
+      nfolds = 5,
+      ntrees = 2000,
+      max_depth = 40,
+      min_rows = 3,
+      sample_rate = 0.8,
+      mtries = 400
+    )
+    model1_perf <- h2o.performance(model = model1)
+  }
+  
+  var_importances <- h2o.varimp(model1) %>%
+    filter(variable != "Site") %>% # temporary. This line to be removed once models are corrected to remove SITE.
+    as_tibble %>% # Appending taxonomy information
+    mutate(
+      Superkingdom = as.character(tax[var_importances$variable,"Superkingdom"]),
+      Kingdom = as.character(tax[var_importances$variable,"Kingdom"]), 
+      Phylum = as.character(tax[var_importances$variable,"Phylum"]),
+      Class = as.character(tax[var_importances$variable,"Class"]),
+      Order = as.character(tax[var_importances$variable,"Order"]),
+      Family = as.character(tax[var_importances$variable,"Family"]),
+      Genus = as.character(tax[var_importances$variable,"Genus"]),
+      Species = as.character(tax[var_importances$variable,"species"])
+    )
+  write_tsv(var_importances, path = metazoan_taxa_importance_file_location)
+}
 
-# The test set error is relatively similar to the OOB error.
 
 
 # Technical replicates vs intra-site distances -------------------
