@@ -21,13 +21,13 @@ use_plotly_cloud <- FALSE # set this to TRUE to enable the use of `api_create` t
 plotly_sharing_setting <- "secret" # Plot.ly cloud privacy setting for figures generated, only applicable if `use_plotly_cloud` == TRUE.
 use_h2o <- FALSE # Use `h2o` instead of the R `randomForest` package?
 use_h2o_grid_search <- FALSE # Use a full grid search instead of a single model for h2o, only applicable if `use_h2o` == TRUE.
+set.seed(7270) # Setting a seed for consistency.
 
 # Load libraries ------------------------
 
 library(phyloseq)
 library(vegan)
 library(tidyverse)
-library(parallel)
 library(plotly)
 library(lubridate)
 library(genefilter) # for the kOverA function
@@ -54,6 +54,23 @@ filter_taxa_to_other <- function(physeq, filterFunc, merged_taxon_name = "Other 
   new_physeq <- merge_taxa(physeq, taxa_to_merge_names, archetype = 1)
   tax_table(new_physeq)[taxa_to_merge_names[1],] <- replicate(ncol(tax_table(new_physeq)), merged_taxon_name) # merges with first taxon, so we can replace the lineage information for the first taxon to whatever we want displayed
   return(new_physeq)
+}
+
+plotly_permanova <- function(x) { # Make PERMANOVA output into a plot.ly bar chart.
+  if(is(x,"anova")) {
+    x.tb <- x %>%
+      rownames_to_column(var = "term") %>%
+      as_tibble() %>%
+      mutate(text = paste0("DF = ", Df, "\n F = ", round(F, digits = 2), "\n P = ", `Pr(>F)`)) %>%
+      filter(term != "Total")
+    
+    perm_plot <- plot_ly(x.tb, x = ~term, y =~ R2, text = ~ text, textposition = "auto", type = "bar") %>%
+      layout(xaxis = list(title = "Term"), yaxis = list(title = "R<sup>2</sup>"))
+      return(perm_plot)
+  } else {
+    stop("Function plotly_permanova() requires an 'anova' class object as input.")
+  }
+  
 }
 
 
@@ -188,7 +205,10 @@ meta_comb <- cbind(otu_table(curated_edna_meta.tr.f),selected_env) #combined dat
 
 if (use_h2o == FALSE) {
   meta_rf <- randomForest(meta_comb[,1:(ncol(meta_comb)-1)], meta_comb[,ncol(meta_comb)], ntree = 2000, importance = TRUE, proximity = TRUE, mtry = 200)
-  raw_importance <- importance(meta_rf) %>% as.data.frame() %>% rownames_to_column(var = "SHA1") %>% as_tibble() # Feature importance
+  raw_importance <- importance(meta_rf) %>% # Feature importance
+    as.data.frame() %>%
+    rownames_to_column(var = "SHA1") %>% 
+    as_tibble() 
   
   meta_imp_table <- raw_importance %>% # Appending taxonomy information
     mutate(
@@ -204,9 +224,8 @@ if (use_h2o == FALSE) {
     arrange(desc(MeanDecreaseAccuracy)) # Sort features by decreasing Mean Decrease in Accuracy
 }
 
-
-
 write_tsv(meta_imp_table, path = metazoan_taxa_importance_file_location)
+
 
 # H2o distributed random forest ----------------
 
@@ -431,14 +450,26 @@ if (use_plotly_cloud == TRUE) {
 
 RLS_permanova_nostrata <- adonis2(formula = fish_table ~ Location * Habitat + Diver + Site * Habitat, data = fish_site_metadata_sub, method = "bray")
 RLS_permanova_strata <- adonis2(formula = fish_table ~ Location / Habitat, strata = Site, data = fish_site_metadata_sub, method = "bray", strata = "Location")
-
 #adonis2(formula = fish_table ~ Location * Habitat + Diver + Site * Habitat, data = fish_site_metadata_sub, method = "raup", binary = TRUE)
+
+# Plotting code example.
+RLS_permanova_nostrata_p <- plotly_permanova(RLS_permanova_nostrata) %>%
+  layout(title = "RLS Diver survey (fish)")
+if (use_plotly_cloud == TRUE) {
+  api_create(RLS_permanova_nostrata_p, filename = "bocas/edna/permanova/RLS_nostrata", sharing = plotly_sharing_setting)
+}
 
 # Metazoan eDNA OTUs
 # `BayRegion` in the metazoan eDNA data is the same as `Location`
 metazoan_permanova_strata <- adonis2(formula = meta_OTUs ~ BayRegion * Ecosystem, strata = Site, data = curated_edna_metadata_tab, method = "bray")
 metazoan_permanova_nostrata <- adonis2(formula = meta_OTUs ~ BayRegion * Ecosystem + Site * Ecosystem, data = curated_edna_metadata_tab, method = "bray")
 #adonis2(formula = meta_OTUs ~ BayRegion * Ecosystem + Site * Ecosystem, data = curated_edna_metadata_tab, method = "raup", binary = TRUE)
+
+metazoan_permanova_nostrata_p <- plotly_permanova(metazoan_permanova_nostrata) %>%
+  layout(title = "Metazoan eDNA")
+if (use_plotly_cloud == TRUE) {
+  api_create(metazoan_permanova_nostrata_p, filename = "bocas/edna/permanova/metazoan_nostrata", sharing = plotly_sharing_setting)
+}
 
 # Species list cross-checking ---------------------------
 
