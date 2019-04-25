@@ -122,13 +122,13 @@ phyglom_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>%
 
 fish_data <- read_csv(RLS_survey_location) %>%
   filter(Diver != 'Daniella Heflin') %>% # We had observations from a third diver for some sites—removed for consistency
-  select(Line_ID, Diver, Buddy, Site.No., event, Site.Name, Habitat, Latitude, Longitude, Date, vis, Direction, Time, Depth, Method, Block, Code, Species, Common.name, `Total Abundance`, `Total Biomass`) %>%
+  select(Line_ID, Diver, Buddy, Site.No., event, Site.Name, Ecosystem, Latitude, Longitude, Date, vis, Direction, Time, Depth, Method, Block, Code, Species, Common.name, `Total Abundance`, `Total Biomass`) %>%
   mutate(Code = str_to_lower(Code)) %>% # Code is an abbrev. for species, lowercased for consistency
   unique() # One row is an exact duplicate, likely an error. Removing duplicates
 fish_data$Species[fish_data$Species == "Clupeid spp."] <- "Clupeidae" # manual correction
 
 if(file.exists(fish_site_metadata_location)) { #If a metadata file exists, read it in
-  # Currently, this is used because I manually added a column called Location to the metadata file, which corresponds to "BayRegion" in the eDNA
+  # Currently, this is used because I manually added a column called BayRegion to the metadata file, which corresponds to "BayRegion" in the eDNA
   # At some point, Location should be renamed to BayRegion for consistency
   print("Fish site metadata exists. Loading in fish site metadata.")
   fish_site_metadata_sub <- read.delim(fish_site_metadata_location) %>% # Load in a new metadata file
@@ -145,7 +145,7 @@ if(file.exists(fish_site_metadata_location)) { #If a metadata file exists, read 
         str_replace("STRI POINT", "STRI") %>% # for consistency
         str_replace("SAIGON BAY", "SAIGON")
     ) %>%
-    select(event, Site.Name,Habitat, Latitude, Longitude, Depth, Method, Block, datetime, Diver) %>%
+    select(event, Site.Name,Ecosystem, Latitude, Longitude, Depth, Method, Block, datetime, Diver) %>%
     unique()
   fish_site_metadata_sub <- column_to_rownames(as.data.frame(fish_site_metadata), var = "event")
 }
@@ -393,12 +393,12 @@ RLS_nmds_df <- cbind(RLS_nmds$points,fish_site_metadata_sub)
 RLS_nmds_2ddf <- cbind(RLS_nmds_2d$points,fish_site_metadata_sub)
 
 RLS_nmds_p <- plot_ly(type = 'scatter3d', mode = 'markers', data =RLS_nmds_df, x = ~MDS1, y = ~MDS2, z = ~MDS3,
-                      text = ~Site, color = ~Habitat, symbol = ~Location, 
+                      text = ~Site, color = ~Ecosystem, symbol = ~BayRegion, 
                       marker = list(opacity = 0.75), colors = "Set1", symbols = c('circle', 'circle-open','x', 'circle-open', 'square')) %>%
   layout(title= paste("RLS Bray-Curtis NMDS, Stress:", round(RLS_nmds$stress, digits = 4)))
 
 RLS_nmds_2d_p <- plot_ly(type = 'scatter', mode = 'markers', data = as.data.frame(RLS_nmds_2ddf), x = ~MDS1, y = ~MDS2,
-                         text = ~Site.Name, color = ~Habitat, symbol = ~Location, 
+                         text = ~Site.Name, color = ~Ecosystem, symbol = ~BayRegion, 
                          marker = list(opacity = 0.75, size = 16), colors = "Set1", symbols = c('circle', 'diamond-open-dot','x', 'square')) %>%
   layout(title= paste("RLS Bray-Curtis NMDS, Stress:", round(RLS_nmds_2d$stress, digits = 4)))
 
@@ -448,8 +448,8 @@ if (use_plotly_cloud == TRUE) {
 
 # RLS fish survey
 
-RLS_permanova_nostrata <- adonis2(formula = fish_table ~ Location * Habitat + Diver + Site * Habitat, data = fish_site_metadata_sub, method = "bray")
-RLS_permanova_strata <- adonis2(formula = fish_table ~ Location / Habitat, strata = Site, data = fish_site_metadata_sub, method = "bray", strata = "Location")
+RLS_permanova_nostrata <- adonis2(formula = fish_table ~ BayRegiom * Ecosystem + Diver + Site * Ecosystem, data = fish_site_metadata_sub, method = "bray")
+RLS_permanova_strata <- adonis2(formula = fish_table ~ BayRegion / Ecosystem, strata = Site, data = fish_site_metadata_sub, method = "bray", strata = "BayRegion")
 #adonis2(formula = fish_table ~ Location * Habitat + Diver + Site * Habitat, data = fish_site_metadata_sub, method = "raup", binary = TRUE)
 
 # Plotting code example.
