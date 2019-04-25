@@ -1,20 +1,5 @@
 #!/usr/bin/env Rscript
 
-# pass an integer (number of cores) to the Rscript to use multiple cores. Otherwise it defaults to 1 core.
-# Used only for running on the Smithsonian HPC Hydra or for other clusters where the number of cores cannot be reliably estimated using `nproc`.
-# Currently, there are no parallel operations in this script, but I have this in many of scripts for convenience in case I need it later.
-args = commandArgs(trailingOnly=TRUE)
-if (length(args)==0) {
-  nslots <- 1
-  print("No argument provided. Defaulting to single core processing.")
-} else if (length(args)==1 & is.integer(as.integer(args[1]))) {
-  # default output file
-  nslots <- as.integer(args[1])
-  print(paste("Using", nslots, "cores."))
-} else {
-  stop("More than one argument supplied. You should only supply one argument, which should be the number of cores allotted as an integer.")
-}
-
 # Flags ----------------------
 
 use_plotly_cloud <- FALSE # set this to TRUE to enable the use of `api_create` to make/update Plot.ly cloud figures.
@@ -91,24 +76,6 @@ processed_bocasDB_file <- "output/bocasDB_metazoan_processed_20190307.tsv" # Ref
 #if processed_bocas_DB_files already exists, it will not be overwritten. Instead, it will be loaded and used to save time.
 
 eDNA_spp_file <- "output/eDNA_metazoan_species.tsv" # species-level identifications from eDNA. Loaded and not overwritten if already exists.
-
-# Functions --------------
-vegan_otu <- function(physeq) { #convert phyloseq OTU table into vegan OTU matrix
-  OTU <- otu_table(physeq)
-  if (taxa_are_rows(OTU)) {
-    OTU <- t(OTU)
-  }
-  return(as(OTU, "matrix"))
-}
-
-filter_taxa_to_other <- function(physeq, filterFunc, merged_taxon_name = "Other taxa") { #returns phyloseq object
-  taxa_to_merge <- (!filter_taxa(physeq, filterFunc, FALSE)) # named logical vector where samples NOT meeting the filter threshold are TRUE
-  taxa_to_merge_names <- which(taxa_to_merge == TRUE) %>% names() #get the names
-  new_physeq <- merge_taxa(physeq, taxa_to_merge_names, archetype = 1)
-  tax_table(new_physeq)[taxa_to_merge_names[1],] <- replicate(ncol(tax_table(new_physeq)), merged_taxon_name) # merges with first taxon, so we can replace the lineage information for the first taxon to whatever we want displayed
-  return(new_physeq)
-}
-
 
 
 # Load phyloseq --------------------
