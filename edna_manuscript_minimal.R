@@ -61,7 +61,7 @@ plotly_permanova <- function(x) { # Make PERMANOVA output into a plot.ly bar cha
     x.tb <- x %>%
       rownames_to_column(var = "term") %>%
       as_tibble() %>%
-      mutate(text = paste0("DF = ", Df, "\n F = ", round(F, digits = 2), "\n P = ", `Pr(>F)`)) %>%
+      mutate(text = paste0("Df = ", Df, "\n F = ", round(F, digits = 2), "\n P = ", `Pr(>F)`)) %>%
       filter(term != "Total")
     
     perm_plot <- plot_ly(x.tb, x = ~term, y =~ R2, text = ~ text, textposition = "auto", type = "bar") %>%
@@ -112,11 +112,7 @@ meta_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>%
 
 sample_data(meta_curated_bocas_edna.ps.tr) <- sample_data(sample_data_renamed)
 
-phyglom_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>%
-  subset_samples(Fraction == "eDNA") %>% #filter out control, negative and mock samples, NOTE: currently includes non-primary samples
-  tax_glom(taxrank = "Phylum") %>%
-  transform_sample_counts(function(x) x / sum(x)) %>%
-  filter_taxa_to_other(function(x) max(x) > 0.03) # All taxa that are never > 0.03 rel. abun. merged into "Other taxa" 
+ 
 
 # Load fish data -------------------------------------
 
@@ -172,6 +168,14 @@ fish_tax <- as.matrix(column_to_rownames(fish_tax, var = "Code"))
 fish_ps <- phyloseq(otu_table(as.matrix(fish_table), taxa_are_rows = FALSE), tax_table(fish_tax), sample_data(fish_site_metadata_sub))
 
 # Taxonomic composition -------------------------------------------
+
+# Phylum-level taxonomic composition plot
+phyglom_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>% # Aggregate data into phylum-level.
+  subset_samples(Fraction == "eDNA") %>% #filter out control, negative and mock samples, NOTE: currently includes non-primary samples
+  tax_glom(taxrank = "Phylum") %>%
+  transform_sample_counts(function(x) x / sum(x)) %>%
+  filter_taxa_to_other(function(x) max(x) > 0.03) # All taxa that are never > 0.03 rel. abun. merged into "Other taxa"
+
 edna_phylum <- plot_ly( data = psmelt(phyglom_curated_bocas_edna.ps.tr), x = ~Abundance, y = ~Sample, color =~ Phylum, type = 'bar', colors = "Paired") %>%
   layout(barmode = "stack",
          bargap = 0,
@@ -204,7 +208,7 @@ selected_env <- sample_data(curated_edna_meta.tr.f) %>% # column containing the 
 meta_comb <- cbind(otu_table(curated_edna_meta.tr.f),selected_env) #combined dataframe with OTUs plus the Ecosystem column.
 
 if (use_h2o == FALSE) {
-  meta_rf <- randomForest(meta_comb[,1:(ncol(meta_comb)-1)], meta_comb[,ncol(meta_comb)], ntree = 2000, importance = TRUE, proximity = TRUE, mtry = 200)
+  meta_rf <- randomForest(meta_comb[,1:(ncol(meta_comb)-1)], meta_comb[,ncol(meta_comb)], ntree = 2000, importance = TRUE, proximity = TRUE, mtry = 200) # Random forest algorithm. Tweak settings here if necessary—if not using h2o.
   raw_importance <- importance(meta_rf) %>% # Feature importance
     as.data.frame() %>%
     rownames_to_column(var = "SHA1") %>% 
@@ -222,9 +226,11 @@ if (use_h2o == FALSE) {
       Species = as.character(tax[raw_importance$SHA1,"species"])
     ) %>%
     arrange(desc(MeanDecreaseAccuracy)) # Sort features by decreasing Mean Decrease in Accuracy
+  
+  write_tsv(meta_imp_table, path = metazoan_taxa_importance_file_location) # Write variable importances to a file.
 }
 
-write_tsv(meta_imp_table, path = metazoan_taxa_importance_file_location)
+
 
 
 # H2o distributed random forest ----------------
@@ -374,14 +380,13 @@ hab_map_tb <- tibble(short = c("C", "M", "S", "Sa"), long = c("Coral reef", "Man
   column_to_rownames(var = "short")
 trip_comp_tb$habitat <- hab_map_tb[trip_comp_tb$hab_short,"long"]
 trip_comp_box <- plot_ly(trip_comp_tb, x = ~ habitat, color = ~ comparison, y = ~dist, type = "box") %>%
-  layout(boxmode = "group", xaxis = list(title = "Habitat"), yaxis = list(title = "Bray-Curtis distance", rangemode = "tozero"))
+  layout(boxmode = "group", xaxis = list(title = "Source Ecosystem"), yaxis = list(title = "Bray-Curtis distance", rangemode = "tozero"))
 
 trip_comp_box
 if (use_plotly_cloud == TRUE) {
   api_create(trip_comp_box, filename = "bocas/edna/replicates/boxplot", sharing = plotly_sharing_setting)
 }
 
-#Need to make a site_code4 column or something that's like CCR-Sa with no number, then loop through site/habitat combos in the distance matrix using the primary_samples_data and stash those distances into a data frame.
 
 # Ordinations --------------------
 
@@ -403,6 +408,7 @@ RLS_nmds_2d_p <- plot_ly(type = 'scatter', mode = 'markers', data = as.data.fram
   layout(title= paste("RLS Bray-Curtis NMDS, Stress:", round(RLS_nmds_2d$stress, digits = 4)))
 
 RLS_nmds_p
+RLS_nmds_2d_p
 
 if (use_plotly_cloud == TRUE) {
   api_create(RLS_nmds_p, filename = "bocas/edna/ordi/RLS_bc_nmds", sharing = plotly_sharing_setting)
@@ -436,6 +442,7 @@ meta_nmds_2d_p <- plot_ly(type = 'scatter', mode = 'markers', data = curated_met
                          marker = list(opacity = 0.75, size = 16), colors = "Set1", symbols = c('circle', 'square','x', 'diamond-open-dot')) %>%
   layout(title= paste("Metazoan eDNA Bray-Curtis NMDS, Stress:", round(meta_nmds_2d$stress, digits = 4)))
 
+meta_nmds_2d_p
 if (use_plotly_cloud == TRUE) {
   api_create(meta_nmds_2d_p, filename = "bocas/edna/ordi/metazoan_bc_nmds_2d", sharing = plotly_sharing_setting)
 }
@@ -448,13 +455,15 @@ if (use_plotly_cloud == TRUE) {
 
 # RLS fish survey
 
-RLS_permanova_nostrata <- adonis2(formula = fish_table ~ BayRegiom * Ecosystem + Diver + Site * Ecosystem, data = fish_site_metadata_sub, method = "bray")
+RLS_permanova_nostrata <- adonis2(formula = fish_table ~ BayRegion * Ecosystem + Diver + Site * Ecosystem, data = fish_site_metadata_sub, method = "bray")
 RLS_permanova_strata <- adonis2(formula = fish_table ~ BayRegion / Ecosystem, strata = Site, data = fish_site_metadata_sub, method = "bray", strata = "BayRegion")
 #adonis2(formula = fish_table ~ Location * Habitat + Diver + Site * Habitat, data = fish_site_metadata_sub, method = "raup", binary = TRUE)
 
 # Plotting code example.
 RLS_permanova_nostrata_p <- plotly_permanova(RLS_permanova_nostrata) %>%
   layout(title = "RLS Diver survey (fish)")
+
+RLS_permanova_nostrata_p
 if (use_plotly_cloud == TRUE) {
   api_create(RLS_permanova_nostrata_p, filename = "bocas/edna/permanova/RLS_nostrata", sharing = plotly_sharing_setting)
 }
@@ -467,6 +476,8 @@ metazoan_permanova_nostrata <- adonis2(formula = meta_OTUs ~ BayRegion * Ecosyst
 
 metazoan_permanova_nostrata_p <- plotly_permanova(metazoan_permanova_nostrata) %>%
   layout(title = "Metazoan eDNA")
+metazoan_permanova_nostrata_p
+
 if (use_plotly_cloud == TRUE) {
   api_create(metazoan_permanova_nostrata_p, filename = "bocas/edna/permanova/metazoan_nostrata", sharing = plotly_sharing_setting)
 }
