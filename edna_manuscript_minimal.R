@@ -92,6 +92,25 @@ processed_bocasDB_file <- "output/bocasDB_metazoan_processed_20190307.tsv" # Ref
 
 eDNA_spp_file <- "output/eDNA_metazoan_species.tsv" # species-level identifications from eDNA. Loaded and not overwritten if already exists.
 
+# Functions --------------
+vegan_otu <- function(physeq) { #convert phyloseq OTU table into vegan OTU matrix
+  OTU <- otu_table(physeq)
+  if (taxa_are_rows(OTU)) {
+    OTU <- t(OTU)
+  }
+  return(as(OTU, "matrix"))
+}
+
+filter_taxa_to_other <- function(physeq, filterFunc, merged_taxon_name = "Other taxa") { #returns phyloseq object
+  taxa_to_merge <- (!filter_taxa(physeq, filterFunc, FALSE)) # named logical vector where samples NOT meeting the filter threshold are TRUE
+  taxa_to_merge_names <- which(taxa_to_merge == TRUE) %>% names() #get the names
+  new_physeq <- merge_taxa(physeq, taxa_to_merge_names, archetype = 1)
+  tax_table(new_physeq)[taxa_to_merge_names[1],] <- replicate(ncol(tax_table(new_physeq)), merged_taxon_name) # merges with first taxon, so we can replace the lineage information for the first taxon to whatever we want displayed
+  return(new_physeq)
+}
+
+
+
 # Load phyloseq --------------------
 curated_bocas_edna.ps <- readRDS(eDNA_phyloseq_location) # DADA2, LULU-processed phyloseq object
 tax <- tax_table(curated_bocas_edna.ps)
