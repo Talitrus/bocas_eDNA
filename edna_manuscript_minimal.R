@@ -41,7 +41,7 @@ filter_taxa_to_other <- function(physeq, filterFunc, merged_taxon_name = "Other 
   return(new_physeq)
 }
 
-plotly_permanova <- function(x) { # Make PERMANOVA output into a plot.ly bar chart.
+plotly_permanova <- function(x, ...) { # Make PERMANOVA output into a plot.ly bar chart.
   if(is(x,"anova")) {
     x.tb <- x %>%
       rownames_to_column(var = "term") %>%
@@ -49,8 +49,8 @@ plotly_permanova <- function(x) { # Make PERMANOVA output into a plot.ly bar cha
       mutate(text = paste0("Df = ", Df, "\n F = ", round(F, digits = 2), "\n P = ", `Pr(>F)`)) %>%
       filter(term != "Total")
     
-    perm_plot <- plot_ly(x.tb, x = ~term, y =~ R2, text = ~ text, textposition = "auto", type = "bar") %>%
-      layout(xaxis = list(title = "Term"), yaxis = list(title = "R<sup>2</sup>"))
+    perm_plot <- plot_ly(x.tb, y = ~term, x =~ R2, text = ~ text, textposition = "auto", type = "bar", ...) %>%
+      layout(yaxis = list(title = "Term"), xaxis = list(title = "R<sup>2</sup>"))
       return(perm_plot)
   } else {
     stop("Function plotly_permanova() requires an 'anova' class object as input.")
@@ -154,6 +154,38 @@ fish_tax <- as.matrix(column_to_rownames(fish_tax, var = "Code"))
 fish_ps <- phyloseq(otu_table(as.matrix(fish_table), taxa_are_rows = FALSE), tax_table(fish_tax), sample_data(fish_site_metadata_sub))
 
 # Taxonomic composition -------------------------------------------
+
+# Superkingdom-level taxonomic statistics
+skglom_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>% # Aggregate data into phylum-level.
+  subset_samples(Fraction == "eDNA") %>% #filter out control, negative and mock samples, NOTE: currently includes non-primary samples
+  tax_glom(taxrank = "Superkingdom")
+
+# How many reads from each superkingdom?
+(taxa_sums(skglom_curated_bocas_edna.ps.tr))/sum(sample_sums(curated_bocas_edna.ps))
+tax[names(taxa_sums(skglom_curated_bocas_edna.ps.tr)),]
+
+# Kingdom-level taxonomic statistics
+kingglom_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>% # Aggregate data into phylum-level.
+  subset_samples(Fraction == "eDNA") %>% #filter out control, negative and mock samples, NOTE: currently includes non-primary samples
+  tax_glom(taxrank = "Kingdom")
+
+# How many reads from each superkingdom?
+(taxa_sums(kingglom_curated_bocas_edna.ps.tr))/sum(sample_sums(curated_bocas_edna.ps))
+tax[names(taxa_sums(kingglom_curated_bocas_edna.ps.tr)),]
+
+#How many metazoan reads and OTUs?
+# How many Metazoan OTUs?
+meta_counts.ps <- curated_bocas_edna.ps %>%
+  subset_samples(Fraction == "eDNA" & Sample == "Primary") %>% # Doesn't matter what the `fun` argument is set to, I think, we overwrite it in the next step
+  subset_taxa(Kingdom == "Metazoa")
+
+sum(sample_sums(meta_counts.ps))
+ntaxa(meta_counts.ps) 
+
+# How many reads identified down to species?
+# See end of script.
+
+
 
 # Phylum-level taxonomic composition plot
 phyglom_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>% # Aggregate data into phylum-level.
@@ -446,7 +478,7 @@ RLS_permanova_strata <- adonis2(formula = fish_table ~ BayRegion / Ecosystem, st
 #adonis2(formula = fish_table ~ Location * Habitat + Diver + Site * Habitat, data = fish_site_metadata_sub, method = "raup", binary = TRUE)
 
 # Plotting code example.
-RLS_permanova_nostrata_p <- plotly_permanova(RLS_permanova_nostrata) %>%
+RLS_permanova_nostrata_p <- plotly_permanova(RLS_permanova_nostrata, name = "Fish survey") %>%
   layout(title = "RLS Diver survey (fish)")
 
 RLS_permanova_nostrata_p
@@ -460,12 +492,21 @@ metazoan_permanova_strata <- adonis2(formula = meta_OTUs ~ BayRegion * Ecosystem
 metazoan_permanova_nostrata <- adonis2(formula = meta_OTUs ~ BayRegion * Ecosystem + Site * Ecosystem, data = curated_edna_metadata_tab, method = "bray")
 #adonis2(formula = meta_OTUs ~ BayRegion * Ecosystem + Site * Ecosystem, data = curated_edna_metadata_tab, method = "raup", binary = TRUE)
 
-metazoan_permanova_nostrata_p <- plotly_permanova(metazoan_permanova_nostrata) %>%
+metazoan_permanova_nostrata_p <- plotly_permanova(metazoan_permanova_nostrata, name = "Metazoan eDNA") %>%
   layout(title = "Metazoan eDNA")
 metazoan_permanova_nostrata_p
 
 if (use_plotly_cloud == TRUE) {
   api_create(metazoan_permanova_nostrata_p, filename = "bocas/edna/permanova/metazoan_nostrata", sharing = plotly_sharing_setting)
+}
+
+
+permanova_combi_p <- subplot(RLS_permanova_nostrata_p, metazoan_permanova_nostrata_p, shareY = TRUE, shareX = TRUE) %>%
+  layout(title = "")
+permanova_combi_p
+
+if (use_plotly_cloud == TRUE) {
+  api_create(permanova_combi_p, filename = "bocas/edna/permanova/combined_nostrata", sharing = plotly_sharing_setting)
 }
 
 # Species list cross-checking ---------------------------
@@ -483,9 +524,18 @@ if(file.exists(processed_bocasDB_file)) { # Load processed Bocas spp db
 }
 
 
-curated_edna.ps.spp <- meta_curated_bocas_edna.ps.tr %>% #just used to retrieve a list of species-level IDs
+curated_edna.ps.spp <- curated_bocas_edna.ps %>%
+  subset_samples(Fraction == "eDNA" & Sample == "Primary") %>% #filter out control, negative and mock samples # if desired, we can also use  `& Ecosystem != "Dock"` to remove docks
+  merge_samples("site_code3", fun = mode) %>% # Doesn't matter what the `fun` argument is set to, I think, we overwrite it in the next step
+  subset_taxa(Kingdom == "Metazoa") %>% #just used to retrieve a list of species-level IDs
   tax_glom(taxrank = "species") %>%
   filter_taxa(function (x) sum(x) > 0, TRUE)
+
+# How many eDNA OTUs identified down to species level and how many reads does this account for?
+sum(sample_sums(curated_edna.ps.spp)) #526898 reads
+curated_edna.ps.spp # 387 taxa
+
+
 edna_species_names <- tax_table(curated_edna.ps.spp)@.Data[,"species"]
 
 if(file.exists(eDNA_spp_file)) {
@@ -522,7 +572,8 @@ fish_check <- fish_tax %>%
   unique()
 
 
-fish_check_tsns <- get_tsn(fish_check$species)
+fish_check_tsns <- get_tsn(fish_check$species, ask = TRUE) # This should be run interactively when possible so it can take user input on ambiguous species names (e.g. )
+
 fish_check_accepted <- itis_acceptname(fish_check_tsns[!is.na(fish_check_tsns)])
 
 fish_species_tibble <- tibble(species = fish_check$species, tsn = fish_check_tsns, accepted_tsn = NA)
