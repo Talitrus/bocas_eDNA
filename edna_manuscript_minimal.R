@@ -23,9 +23,31 @@ if (use_h2o == TRUE) {
   library(randomForest)
 }
 
-
 # Functions --------------
+
+res_to_tsv <- function(x, filename, alpha_threshold = 1, ...) { #Convert DESeq results to TSV
+  require(tibble)
+  require(dplyr)
+  require(readr)
+  export_tb <- tibble::as_tibble(x@listData)
+  export_tb$gene <- x@rownames
+  export_tb <- export_tb %>%
+    dplyr::select(gene, baseMean, log2FoldChange, lfcSE, pvalue, padj) %>%
+    dplyr::arrange(padj)
+  if (alpha_threshold > 0) {
+    export_tb <- export_tb %>%
+      dplyr::filter(padj <= alpha_threshold)
+  }
+  readr::write_tsv(export_tb, path = filename, ...)
+}
+
+gm_mean = function(x, na.rm=TRUE){ #geometric mean function that can deal with zeroes.
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+
+
 vegan_otu <- function(physeq) { #convert phyloseq OTU table into vegan OTU matrix
+  require(phyloseq)
   OTU <- otu_table(physeq)
   if (taxa_are_rows(OTU)) {
     OTU <- t(OTU)
@@ -34,6 +56,7 @@ vegan_otu <- function(physeq) { #convert phyloseq OTU table into vegan OTU matri
 }
 
 filter_taxa_to_other <- function(physeq, filterFunc, merged_taxon_name = "Other taxa") { #returns phyloseq object
+  require(phyloseq)
   taxa_to_merge <- (!filter_taxa(physeq, filterFunc, FALSE)) # named logical vector where samples NOT meeting the filter threshold are TRUE
   taxa_to_merge_names <- which(taxa_to_merge == TRUE) %>% names() #get the names
   new_physeq <- merge_taxa(physeq, taxa_to_merge_names, archetype = 1)
@@ -42,6 +65,8 @@ filter_taxa_to_other <- function(physeq, filterFunc, merged_taxon_name = "Other 
 }
 
 plotly_permanova <- function(x, ...) { # Make PERMANOVA output into a plot.ly bar chart.
+  require(plotly)
+  require(tibble)
   if(is(x,"anova")) {
     x.tb <- x %>%
       rownames_to_column(var = "term") %>%
@@ -583,3 +608,81 @@ fish_species_tibble[!is.na(fish_check_tsns),"accepted_tsn"] <- fish_check_accept
 fish_species_tibble$in_bocas_db_acctsn = if_else(!is.na(fish_species_tibble$accepted_tsn), fish_species_tibble$accepted_tsn %in% bocas_metazoans$accepted_tsn, NA)
 fish_species_tibble$acctsn_or_raw_in_bdb <- fish_species_tibble$in_bocas_db_acctsn | fish_species_tibble$in_bocas_db_raw
 # NOTE: Scarus iseri is written as Scarus iserti in the Bocas spp DB which is not an accepted name and is also not on ITIS, so this will need to be manually accounted for at this time.
+
+
+# Differentially abundant taxa testing ----------
+
+# Setup
+library(DESeq2)
+
+### Fish ###########################
+# Figure 4a, RLS fish, mangrove vs seagrass, top 20 diff ---------------
+RLS.MS.ps = subset_samples(fish_ps, Ecosystem %in% c("Seagrass","Mangrove")) # Subset to your contrast or else the size scaling factor calculation will incorporate all samples (w/unnecessary habitats)
+
+RLS_MvS <- phyloseq_to_deseq2(RLS.MS.ps, ~Ecosystem) 
+RLS_MvS <- estimateSizeFactors(RLS_MvS, type="poscounts")
+RLS_MvS <- DESeq(RLS_MvS, test = "Wald", fitType = "parametric")
+
+RLS_MvS_results <- results(RLS_MvS, contrast = c("Ecosystem","Mangrove","Seagrass"))
+
+fish_lookup <- as.data.frame(fish_code_dictionary) %>% column_to_rownames(var = "Code")
+RLS_MvS_results@rownames <- fish_lookup[RLS_MvS_results@rownames, "Species"]
+res_to_tsv(RLS_MvS_results, alpha = 1, filename = "RLS_MvS.tsv")
+
+# Figure 4b, eDNA fish, mangrove vs seagrass, top 20 diff -------------
+eDNA_fish.ps <- curated_bocas_edna.ps %>%
+  subset_samples(Fraction == "eDNA" & Sample == "Primary") %>% #filter out control, negative and mock samples # if desired, we can also use  `& Ecosystem != "Dock"` to remove docks
+  merge_samples("site_code3", fun = mode) %>% # Doesn't matter what the `fun` argument is set to, I think, we overwrite it in the next step
+  subset_taxa(Class == "Actinopteri") %>% # Metazoan only
+  filter_taxa(function (x) sum(x) > 0, TRUE)# Remove taxa that are no longer represented because of subsetting
+
+sample_data(eDNA_fish.ps) <- sample_data(sample_data_renamed)
+
+eDNA_fish.MS.ps <- eDNA_fish.ps %>%
+  subset_samples(Ecosystem %in% c("Seagrass","Mangrove")) %>% # Metazoan only
+  filter_taxa(function (x) sum(x) > 0, TRUE)
+
+eDNA_fish.MS.ps <- prune_samples(setdiff(sample_names(eDNA_fish.MS.ps), names(which(rowSums(otu_table(eDNA_fish.MS.ps)) == 0))), eDNA_fish.MS.ps) # remove samples with 0 fish reads for DESeq2 compatibility
+
+
+
+eDNA_fish_MvS <- phyloseq_to_deseq2(eDNA_fish.MS.ps, ~Ecosystem)
+
+
+#Size factor and dispersion estimates
+eDNA_fish_MvS = estimateSizeFactors(eDNA_fish_MvS, type = "poscounts")
+eDNA_fish_MvS <- estimateDispersions(eDNA_fish_MvS)
+eDNA_fish_MvS.var <- getVarianceStabilizedData(eDNA_fish_MvS) # Variance-stabilized data. Not yet used
+#eDNA_fish_MvS = DESeq(eDNA_fish_MvS, fitType="local")
+
+eDNA_fish_MvS <- DESeq(eDNA_fish_MvS, test = "Wald", fitType = "parametric")
+
+eDNA_fish_MvS_results <- results(eDNA_fish_MvS, contrast = c("Ecosystem","Mangrove","Seagrass"))
+#eDNA_fish_MvS_results@rownames <- eDNA_fish_MvS_results@rownames.... # Replace SHA1 names with lowest taxonomic name
+res_to_tsv(eDNA_fish_MvS_results, alpha = 1, filename = "eDNA_fish_MvS.tsv") # alpha = 1 means show all results regardless of p-adj
+
+
+
+# Figure "S1 4a", RLS fish, reef vs sand, top 20 diff
+RLS.MS.ps = subset_samples(fish_ps, Ecosystem %in% c("Coral reef","Unvegetated")) # Subset to your contrast or else the size scaling factor calculation will incorporate all samples (w/unnecessary habitats)
+
+RLS_MvS <- phyloseq_to_deseq2(RLS.MS.ps, ~Ecosystem)  ## **ADAPT THIS** ##
+RLS_MvS <- estimateSizeFactors(RLS_MvS, type="poscounts")
+RLS_MvS <- DESeq(RLS_MvS, test = "Wald", fitType = "parametric")
+
+RLS_MvS_results <- results(RLS_MvS, contrast = c("Ecosystem","Mangrove","Seagrass"))
+
+fish_lookup <- as.data.frame(fish_code_dictionary) %>% column_to_rownames(var = "Code")
+RLS_MvS_results@rownames <- fish_lookup[RLS_MvS_results@rownames, "Species"]
+res_to_tsv(RLS_MvS_results, alpha = 1, filename = "RLS_MvS.tsv")
+
+
+
+# Figure "S1 4b", eDNA fish, reef vs sand, top 20 diff
+
+### Metazoa ########################
+
+# Figure 5a, eDNA metazoa, mangrove vs seagrass
+
+
+# Figure 5b, eDNA metazoa, inner vs outer bay
