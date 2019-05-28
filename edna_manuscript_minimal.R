@@ -627,7 +627,7 @@ RLS_MvS_results <- results(RLS_MvS, contrast = c("Ecosystem","Mangrove","Seagras
 
 fish_lookup <- as.data.frame(fish_code_dictionary) %>% column_to_rownames(var = "Code")
 RLS_MvS_results@rownames <- fish_lookup[RLS_MvS_results@rownames, "Species"]
-res_to_tsv(RLS_MvS_results, alpha = 1, filename = "RLS_MvS.tsv")
+res_to_tsv(RLS_MvS_results, alpha = 1, filename = "output/RLS_MvS.tsv")
 
 # Figure 4b, eDNA fish, mangrove vs seagrass, top 20 diff -------------
 eDNA_fish.ps <- curated_bocas_edna.ps %>%
@@ -659,7 +659,7 @@ eDNA_fish_MvS <- DESeq(eDNA_fish_MvS, test = "Wald", fitType = "parametric")
 
 eDNA_fish_MvS_results <- results(eDNA_fish_MvS, contrast = c("Ecosystem","Mangrove","Seagrass"))
 #eDNA_fish_MvS_results@rownames <- eDNA_fish_MvS_results@rownames.... # Replace SHA1 names with lowest taxonomic name
-res_to_tsv(eDNA_fish_MvS_results, alpha = 1, filename = "eDNA_fish_MvS.tsv") # alpha = 1 means show all results regardless of p-adj
+res_to_tsv(eDNA_fish_MvS_results, alpha = 1, filename = "output/eDNA_fish_MvS.tsv") # alpha = 1 means show all results regardless of p-adj
 
 
 
@@ -674,7 +674,7 @@ RLS_MvS_results <- results(RLS_MvS, contrast = c("Ecosystem","Mangrove","Seagras
 
 fish_lookup <- as.data.frame(fish_code_dictionary) %>% column_to_rownames(var = "Code")
 RLS_MvS_results@rownames <- fish_lookup[RLS_MvS_results@rownames, "Species"]
-res_to_tsv(RLS_MvS_results, alpha = 1, filename = "RLS_MvS.tsv")
+res_to_tsv(RLS_MvS_results, alpha = 1, filename = "output/RLS_MvS.tsv")
 
 
 

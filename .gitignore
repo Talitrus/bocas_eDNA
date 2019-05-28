@@ -1,0 +1,10 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+.DS_Store
+output/randomforest_predictor_importance.txt
+*.tsv
+Differential_Abundance___Heatmap.r
+Summary_table.R
