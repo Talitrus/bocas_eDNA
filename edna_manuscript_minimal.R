@@ -4,9 +4,10 @@
 
 use_plotly_cloud <- FALSE # set this to TRUE to enable the use of `api_create` to make/update Plot.ly cloud figures.
 plotly_sharing_setting <- "secret" # Plot.ly cloud privacy setting for figures generated, only applicable if `use_plotly_cloud` == TRUE.
-use_h2o <- FALSE # Use `h2o` instead of the R `randomForest` package?
+use_h2o <- TRUE # Use `h2o` instead of the R `randomForest` package?
 use_h2o_grid_search <- FALSE # Use a full grid search instead of a single model for h2o, only applicable if `use_h2o` == TRUE.
 set.seed(7270) # Setting a seed for consistency.
+h2o_mem_alloted <- "2g"
 
 # Load libraries ------------------------
 
@@ -22,6 +23,7 @@ if (use_h2o == TRUE) {
 } else {
   library(randomForest)
 }
+library(DESeq2)
 
 # Functions --------------
 
@@ -281,7 +283,7 @@ if (use_h2o == FALSE) {
 if (use_h2o == TRUE) { # If h2o is set to be used instead of the `randomForest` package.
   y <- "Ecosystem" # variable to be predicted
   x <- setdiff(names(meta_comb), c(y, "Site")) # features / predictors
-  h2o.init() # originally run with a large max_mem_size (55g)
+  h2o.init(max_mem_size = h2o_mem_alloted) # adjust as necessary, you might not need so much memory if you don't have a large grid.
   
   eDNA_total.h2o <- as.h2o(meta_comb) # Load data into H2o
   
@@ -323,14 +325,34 @@ if (use_h2o == TRUE) { # If h2o is set to be used instead of the `randomForest` 
       y = y,
       training_frame = eDNA_total.h2o,
       nfolds = 5,
-      ntrees = 2000,
-      max_depth = 40,
+      ntrees = 1000,
+      max_depth = 20,
       min_rows = 3,
-      sample_rate = 0.8,
-      mtries = 400
+      sample_rate = 0.6325,
+      mtries = 700,
+      keep_cross_validation_predictions = TRUE,
+      keep_cross_validation_fold_assignment = TRUE
     )
     model1_perf <- h2o.performance(model = model1)
-  }
+    model1_path <- h2o.saveModel(object = model1, path = "output/")
+    xval_tib <- as_tibble(h2o.cross_validation_holdout_predictions(model1)) # put xval predictions into tibble
+    xval_tib$Ecosystem <- meta_comb$Ecosystem # add on actual value for Ecosystem variable
+    model1_pred_counts <- with(xval_tib, table(Ecosystem, predict))
+    model1_pred_percentage <- model1_pred_counts / rowSums(model1_pred_counts)
+    #model1_pred_heatmap <- plot_ly(x = ~ rownames(model1_pred_percentage), y = ~ colnames(model1_pred_percentage), z = ~ model1_pred_percentage, type = "heatmap", colors = rev(lacroix_palettes$Tangerine[1,]))
+    model1_pred_heatmap <- plot_ly(x = ~ colnames(model1_pred_percentage), y = ~ rownames(model1_pred_percentage), z = ~ model1_pred_percentage, type = "heatmap", colors = viridis::viridis(255, option = "A"), name = "Frequency", colorbar = list(title = list(text = "Frequency"))) %>%
+      layout(
+        xaxis = list(
+          title = "Predicted"
+        ),
+        yaxis = list(
+          title = "Source"
+        )
+      )
+    model1_pred_heatmap
+    if (use_plotly_cloud == TRUE) {
+      api_create(model1_pred_heatmap, filename = "bocas/edna/rf/xval_confusion_heatmap", sharing = plotly_sharing_setting)
+    }
   
   var_importances <- h2o.varimp(model1) %>%
     filter(variable != "Site") %>% # temporary. This line to be removed once models are corrected to remove SITE.
@@ -346,8 +368,8 @@ if (use_h2o == TRUE) { # If h2o is set to be used instead of the `randomForest` 
       Species = as.character(tax[var_importances$variable,"species"])
     )
   write_tsv(var_importances, path = metazoan_taxa_importance_file_location)
+  }
 }
-
 
 
 # Technical replicates vs intra-site distances -------------------
@@ -612,9 +634,6 @@ fish_species_tibble$acctsn_or_raw_in_bdb <- fish_species_tibble$in_bocas_db_acct
 
 # Differentially abundant taxa testing ----------
 
-# Setup
-library(DESeq2)
-
 ### Fish ###########################
 # Figure 4a, RLS fish, mangrove vs seagrass, top 20 diff ---------------
 RLS.MS.ps = subset_samples(fish_ps, Ecosystem %in% c("Seagrass","Mangrove")) # Subset to your contrast or else the size scaling factor calculation will incorporate all samples (w/unnecessary habitats)
@@ -633,7 +652,7 @@ res_to_tsv(RLS_MvS_results, alpha = 1, filename = "output/RLS_MvS.tsv")
 eDNA_fish.ps <- curated_bocas_edna.ps %>%
   subset_samples(Fraction == "eDNA" & Sample == "Primary") %>% #filter out control, negative and mock samples # if desired, we can also use  `& Ecosystem != "Dock"` to remove docks
   merge_samples("site_code3", fun = mode) %>% # Doesn't matter what the `fun` argument is set to, I think, we overwrite it in the next step
-  subset_taxa(Class == "Actinopteri") %>% # Metazoan only
+  subset_taxa(Class == "Actinopteri") %>% # Actinopteri only
   filter_taxa(function (x) sum(x) > 0, TRUE)# Remove taxa that are no longer represented because of subsetting
 
 sample_data(eDNA_fish.ps) <- sample_data(sample_data_renamed)
@@ -663,26 +682,79 @@ res_to_tsv(eDNA_fish_MvS_results, alpha = 1, filename = "output/eDNA_fish_MvS.ts
 
 
 
-# Figure "S1 4a", RLS fish, reef vs sand, top 20 diff
-RLS.MS.ps = subset_samples(fish_ps, Ecosystem %in% c("Coral reef","Unvegetated")) # Subset to your contrast or else the size scaling factor calculation will incorporate all samples (w/unnecessary habitats)
+# Figure "S1 4a", RLS fish, reef vs sand, top 20 diff ---------------------
+RLS.RU.ps = subset_samples(fish_ps, Ecosystem %in% c("Coral reef","Unvegetated")) # Subset to your contrast or else the size scaling factor calculation will incorporate all samples (w/unnecessary habitats)
 
-RLS_MvS <- phyloseq_to_deseq2(RLS.MS.ps, ~Ecosystem)  ## **ADAPT THIS** ##
-RLS_MvS <- estimateSizeFactors(RLS_MvS, type="poscounts")
-RLS_MvS <- DESeq(RLS_MvS, test = "Wald", fitType = "parametric")
+RLS_RvU <- phyloseq_to_deseq2(RLS.RU.ps, ~Ecosystem)  ## **ADAPT THIS** ##
+RLS_RvU <- estimateSizeFactors(RLS_RvU, type="poscounts")
+RLS_RvU <- DESeq(RLS_RvU, test = "Wald", fitType = "parametric")
 
-RLS_MvS_results <- results(RLS_MvS, contrast = c("Ecosystem","Mangrove","Seagrass"))
+RLS_RvU_results <- results(RLS_RvU, contrast = c("Ecosystem","Coral reef","Unvegetated"))
 
 fish_lookup <- as.data.frame(fish_code_dictionary) %>% column_to_rownames(var = "Code")
-RLS_MvS_results@rownames <- fish_lookup[RLS_MvS_results@rownames, "Species"]
-res_to_tsv(RLS_MvS_results, alpha = 1, filename = "output/RLS_MvS.tsv")
+RLS_RvU_results@rownames <- fish_lookup[RLS_RvU_results@rownames, "Species"]
+res_to_tsv(RLS_RvU_results, alpha = 1, filename = "output/RLS_RvU.tsv")
 
 
 
-# Figure "S1 4b", eDNA fish, reef vs sand, top 20 diff
+# Figure "S1 4b", eDNA fish, reef vs sand, top 20 diff ------------------
+
+eDNA_fish.RU.ps <- eDNA_fish.ps %>%
+  subset_samples(Ecosystem %in% c("Coral reef","Unvegetated")) %>%
+  filter_taxa(function (x) sum(x) > 0, TRUE)
+
+eDNA_fish.RU.ps <- prune_samples(setdiff(sample_names(eDNA_fish.RU.ps), names(which(rowSums(otu_table(eDNA_fish.RU.ps)) == 0))), eDNA_fish.RU.ps) # remove samples with 0 fish reads for DESeq2 compatibility
+
+
+
+eDNA_fish_RvU <- phyloseq_to_deseq2(eDNA_fish.RU.ps, ~Ecosystem)
+
+#Size factor and dispersion estimates
+eDNA_fish_RvU = estimateSizeFactors(eDNA_fish_RvU, type = "poscounts")
+eDNA_fish_RvU <- estimateDispersions(eDNA_fish_RvU)
+eDNA_fish_RvU.var <- getVarianceStabilizedData(eDNA_fish_RvU) # Variance-stabilized data. Not yet used
+#eDNA_fish_RvU = DESeq(eDNA_fish_RvU, fitType="local")
+
+eDNA_fish_RvU <- DESeq(eDNA_fish_RvU, test = "Wald", fitType = "parametric")
+
+eDNA_fish_RvU_results <- results(eDNA_fish_RvU, contrast = c("Ecosystem","Coral reef","Unvegetated"))
+#eDNA_fish_RvU_results@rownames <- eDNA_fish_RvU_results@rownames.... # Replace SHA1 names with lowest taxonomic name
+res_to_tsv(eDNA_fish_RvU_results, alpha = 1, filename = "output/eDNA_fish_RvU.tsv") # alpha = 1 means show all results regardless of p-adj
+
+
+
+
 
 ### Metazoa ########################
 
 # Figure 5a, eDNA metazoa, mangrove vs seagrass
+eDNA_meta.ps <- curated_bocas_edna.ps %>%
+  subset_samples(Fraction == "eDNA" & Sample == "Primary") %>% #filter out control, negative and mock samples # if desired, we can also use  `& Ecosystem != "Dock"` to remove docks
+  merge_samples("site_code3", fun = mode) %>% # Doesn't matter what the `fun` argument is set to, I think, we overwrite it in the next step
+  subset_taxa(Kingdom == "Metazoa") %>% # Metazoan only
+  filter_taxa(function (x) sum(x) > 0, TRUE)# Remove taxa that are no longer represented because of subsetting
+
+sample_data(eDNA_meta.ps) <- sample_data(sample_data_renamed)
+
+eDNA_meta.MS.ps <- eDNA_meta.ps %>%
+  subset_samples(Ecosystem %in% c("Seagrass","Mangrove")) %>% # Metazoan only
+  filter_taxa(function (x) sum(x) > 0, TRUE)
+
+eDNA_meta.MS.ps <- prune_samples(setdiff(sample_names(eDNA_meta.MS.ps), names(which(rowSums(otu_table(eDNA_meta.MS.ps)) == 0))), eDNA_meta.MS.ps) # remove samples with 0 metazoan reads for DESeq2 compatibility
 
 
-# Figure 5b, eDNA metazoa, inner vs outer bay
+
+eDNA_meta_MvS <- phyloseq_to_deseq2(eDNA_meta.MS.ps, ~Ecosystem)
+
+
+#Size factor and dispersion estimates
+eDNA_meta_MvS = estimateSizeFactors(eDNA_meta_MvS, type = "poscounts")
+eDNA_meta_MvS <- estimateDispersions(eDNA_meta_MvS)
+eDNA_meta_MvS.var <- getVarianceStabilizedData(eDNA_meta_MvS) # Variance-stabilized data. Not yet used
+#eDNA_fish_MvS = DESeq(eDNA_fish_MvS, fitType="local")
+
+eDNA_meta_MvS <- DESeq(eDNA_meta_MvS, test = "Wald", fitType = "parametric")
+
+eDNA_meta_MvS_results <- results(eDNA_meta_MvS, contrast = c("Ecosystem","Mangrove","Seagrass"))
+#eDNA_fish_MvS_results@rownames <- eDNA_fish_MvS_results@rownames.... # Replace SHA1 names with lowest taxonomic name
+res_to_tsv(eDNA_meta_MvS_results, alpha = 1, filename = "output/eDNA_meta_MvS.tsv") # alpha = 1 means show all results regardless of p-adj
