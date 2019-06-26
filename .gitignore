@@ -8,3 +8,4 @@ output/randomforest_predictor_importance.txt
 *.tsv
 Differential_Abundance___Heatmap.r
 Summary_table.R
+*.bak

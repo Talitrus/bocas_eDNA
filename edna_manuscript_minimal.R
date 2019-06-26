@@ -92,6 +92,65 @@ plotly_permanova <- function(x, ...) { # Make PERMANOVA output into a plot.ly ba
   
 }
 
+lowest_taxonomy_from_table <- function(x, tax_table) { # x should be a sha1 name or taxon name, tax_table is the phyloseq taxonomy table
+  return(as.character(tax[x,ncol(tax)-sum(is.na(tax[x,]))]))
+}
+
+plotUpDownSigTaxa_eco <- function(results, rld, metadata_cols = "Ecosystem", ntaxa = 20, title, type = "sig", alpha = 1, ...) { # derived from https://www.biostars.org/p/178748/#178873, colNums normally is used to specify which samples to include, rld is the (transformed) data, results is a DESeq2 result object, ngenes is how many genes to include, metadata cols is a vector of strings matching the names of the columns to display from the metadata.
+
+  require(SummarizedExperiment)
+  require(tidyr)
+  require(tibble)
+  
+  # make the lists
+  if (alpha < 1) {
+    print("Running alpha threshold.")
+    results <- results[!is.na(results$padj),]
+    results <- results[results$padj < alpha,]
+  }
+  if (type == "sig") {
+    select_taxa <- rownames(head(results[ order( results$padj ), ], n=ntaxa))
+    results_subset <- results[select_taxa,]
+    #select_taxa <- rownames(results[order(results$log2FoldChange),])
+  } else if (type == "down") {
+    select_taxa <- rownames(head(results[ order( results$log2FoldChange ), ], n=ntaxa))
+    results_subset <- results[select_taxa,]
+    select_taxa <- rownames(results[order(results$log2FoldChange),])
+  } else if (type == "up") {
+    select_taxa <- rownames(head(results[ order( -results$log2FoldChange ), ], n=ntaxa))
+    results_subset <- results[select_taxa,]
+    select_taxa <- rownames(results[order(results$log2FoldChange),])
+  } else if (type == "magnitude") {
+    select_taxa <- rownames(head(results[ order( -abs(results$log2FoldChange )), ], n=ntaxa))
+    results_subset <- results[select_taxa,]
+    select_taxa <- rownames(results_subset[order(results_subset$log2FoldChange),])
+  } else if (type == "none") {
+    select_taxa <- rownames(results)
+    results_subset <- results
+  } else {
+    stop('Type argument not recognized. Type must be one of: "sig", "down", "up", or "magnitude".')
+  }
+  
+  # this gives us the rows we want
+  rows <- match(select_taxa, row.names(rld))
+  mat <- cbind(df,t(assay(rld)[rows,]))
+  #mat <- mat - rowMeans(mat) # BN: Do we need this line? Try with and without?
+  mat_tb <- gather(as_tibble(mat, rownames = "Site", .name_repair = "unique"), key = Taxon, value = Abundance, -c(1:2)) %>% arrange(Ecosystem)
+  mat_tb$Abundance[mat_tb$Abundance < 0] <-  0 # Values < 0 set to zero.
+  print("Matrix 1 generated.")
+  mat_tb2 <- mat_tb
+  mat_tb2$Site <- factor(mat_tb$Site, levels = unique(mat_tb$Site)) #
+  mat_tb2$Taxon <- factor(mat_tb2$Taxon, levels = select_taxa)
+  #mat_tb2$lowest_taxon <- sapply(as.character(mat_tb2$Taxon), lowest_taxonomy_from_table, tax_table = tax)
+  # the labels are hard coded at the moment :(
+  #df <- as.data.frame(colData(rld)[metadata_cols])
+  heatmap1 <- ggplot(data = mat_tb2, mapping = aes(x = Site, y = Taxon, fill = Abundance)) + 
+    geom_tile() +
+    viridis::scale_fill_viridis() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  return(heatmap1)
+}
+
 
 # Set file locations -----------------------
 
@@ -184,6 +243,11 @@ fish_tax <- read_csv(file = fish_taxonomy_location) %>%
   select(-Species)
 fish_tax <- as.matrix(column_to_rownames(fish_tax, var = "Code"))
 
+
+# how many fish IDs to spp level out of total observations?
+
+sum(!is.na(fish_tax[match(fish_data$Code, rownames(fish_tax)),"species"])) # number of species-level ID events
+nrow(fish_data) # total number of observation events.
 
 fish_ps <- phyloseq(otu_table(as.matrix(fish_table), taxa_are_rows = FALSE), tax_table(fish_tax), sample_data(fish_site_metadata_sub))
 
@@ -668,7 +732,7 @@ eDNA_fish.MS.ps <- eDNA_fish.ps %>%
 
 eDNA_fish_MvS <- deseq_wrapper(eDNA_fish.MS.ps, formula = ~ Ecosystem)
 
-eDNA_fish_MvS.var <- getVarianceStabilizedData(eDNA_fish_MvS) # Variance-stabilized data. Not yet used
+eDNA_fish_MvS.var <- getVarianceStabilizedData(eDNA_fish_MvS, blind = FALSE) # Variance-stabilized data. Not yet used
 #eDNA_fish_MvS = DESeq(eDNA_fish_MvS, fitType="local")
 
 eDNA_fish_MvS_results <- results(eDNA_fish_MvS, contrast = c("Ecosystem","Mangrove","Seagrass"))
@@ -699,7 +763,7 @@ eDNA_fish.RU.ps <- eDNA_fish.ps %>%
 
 
 eDNA_fish_RvU <- deseq_wrapper(eDNA_fish.RU.ps, ~Ecosystem)
-eDNA_fish_RvU.var <- getVarianceStabilizedData(eDNA_fish_RvU) # Variance-stabilized data. Not yet used
+eDNA_fish_RvU.var <- getVarianceStabilizedData(eDNA_fish_RvU, blind = FALSE) # Variance-stabilized data. Not yet used
 #eDNA_fish_RvU = DESeq(eDNA_fish_RvU, fitType="local")
 
 eDNA_fish_RvU_results <- results(eDNA_fish_RvU, contrast = c("Ecosystem","Coral reef","Unvegetated"))
@@ -714,7 +778,7 @@ RLS.bay.ps = subset_samples(fish_ps, BayRegion %in% c("Inner Bay","Outer Bay")) 
 RLS_bay <- deseq_wrapper(RLS.bay.ps, formula = ~BayRegion)
 
 #Size factor and dispersion estimates
-RLS_bay.var <- getVarianceStabilizedData(RLS_bay) # Variance-stabilized data. Not yet used
+RLS_bay.var <- getVarianceStabilizedData(RLS_bay, blind = FALSE) # Variance-stabilized data. Not yet used
 #RLS_bay = DESeq(RLS_bay, fitType="local")
 
 RLS_bay <- DESeq(RLS_bay, test = "Wald", fitType = "parametric")
@@ -729,7 +793,7 @@ eDNA_fish.bay.ps <- eDNA_fish.ps %>%
 
 
 eDNA_fish_bay <- deseq_wrapper(eDNA_fish.bay.ps, formula = ~BayRegion)
-eDNA_fish_bay.var <- getVarianceStabilizedData(eDNA_fish_bay) # Variance-stabilized data. Not yet used
+eDNA_fish_bay.var <- getVarianceStabilizedData(eDNA_fish_bay, blind = FALSE) # Variance-stabilized data. Not yet used
 #eDNA_fish_bay = DESeq(eDNA_fish_bay, fitType="local")
 
 eDNA_fish_bay <- DESeq(eDNA_fish_bay, test = "Wald", fitType = "parametric")
@@ -755,11 +819,14 @@ eDNA_meta.MS.ps <- eDNA_meta.ps %>%
   filter_taxa(function (x) sum(x) > 0, TRUE)
 
 eDNA_meta_MvS <- deseq_wrapper(eDNA_meta.MS.ps, formula = ~Ecosystem)
-eDNA_meta_MvS.var <- getVarianceStabilizedData(eDNA_meta_MvS) # Variance-stabilized data. Not yet used
+eDNA_meta_MvS.var <- varianceStabilizingTransformation(eDNA_meta_MvS, blind = FALSE) # Variance-stabilized version
+#plotUpDownSigTaxa(eDNA_meta_MvS_results, rld = eDNA_meta_MvS.var, metadata_cols = "Ecosystem", title = "metazoan eDNA, mangrove vs seagrass")
 
 eDNA_meta_MvS_results <- results(eDNA_meta_MvS, contrast = c("Ecosystem","Mangrove","Seagrass"))
 #eDNA_fish_MvS_results@rownames <- eDNA_fish_MvS_results@rownames.... # Replace SHA1 names with lowest taxonomic name
 res_to_tsv(eDNA_meta_MvS_results, alpha = 1, filename = "output/eDNA_meta_MvS.tsv") # alpha = 1 means show all results regardless of p-adj
+
+plotUpDownSigTaxa_eco(results = eDNA_meta_MvS_results, rld = eDNA_meta_MvS.var, metadata_cols = "Ecosystem", ntaxa = 40, title = "eDNA metazoa sorted")
 
 # Figure 5b, eDNA metazoa, inner vs outer bay -------------------
  eDNA_meta.bay.ps <-eDNA_meta.ps %>%
@@ -767,6 +834,6 @@ res_to_tsv(eDNA_meta_MvS_results, alpha = 1, filename = "output/eDNA_meta_MvS.ts
   filter_taxa(function(x) sum(x) > 0, TRUE)
 
 eDNA_meta_bay <- deseq_wrapper(eDNA_meta.bay.ps, formula = ~ BayRegion)
-eDNA_meta_bay.var <- getVarianceStabilizedData(eDNA_meta_bay)
+eDNA_meta_bay.var <- getVarianceStabilizedData(eDNA_meta_bay, blind = FALSE)
 eDNA_meta_bay_results <- results(eDNA_meta_bay)
 res_to_tsv(eDNA_meta_bay_results, alpha = 1, filename = "output/eDNA_meta_bay.tsv")
