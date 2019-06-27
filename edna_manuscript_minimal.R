@@ -24,6 +24,7 @@ if (use_h2o == TRUE) {
   library(randomForest)
 }
 library(DESeq2)
+library(extrafont) # I make use of the free font Open Sans, so you'll need that to have the code run as-is. Feel free to edit out the custom font for your own purposes.
 
 # Functions --------------
 deseq_wrapper <- function(ps, formula = ~1, sfType = "poscounts", fitType = "parametric", test = "Wald") { # wrapper, phyloseq object as first arg
@@ -191,7 +192,13 @@ meta_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>%
 
 sample_data(meta_curated_bocas_edna.ps.tr) <- sample_data(sample_data_renamed)
 
- 
+eDNA_meta.ps <- curated_bocas_edna.ps %>% # same as above but not transformed to relative abundances
+  subset_samples(Fraction == "eDNA" & Sample == "Primary") %>% #filter out control, negative and mock samples # if desired, we can also use  `& Ecosystem != "Dock"` to remove docks
+  merge_samples("site_code3", fun = mode) %>% # Doesn't matter what the `fun` argument is set to, I think, we overwrite it in the next step
+  subset_taxa(Kingdom == "Metazoa") %>% # Metazoan only
+  filter_taxa(function (x) sum(x) > 0, TRUE)# Remove taxa that are no longer represented because of subsetting
+
+sample_data(eDNA_meta.ps) <- sample_data(sample_data_renamed)
 
 # Load fish data -------------------------------------
 
@@ -552,12 +559,81 @@ if (use_plotly_cloud == TRUE) {
   api_create(RLS_nmds_2d_p, filename = "bocas/edna/ordi/RLS_bc_nmds_2d", sharing = plotly_sharing_setting)
 }
 
+#RLS PCoA
 
+RLS_pcoa <- cmdscale(vegdist(fish_table, method = "bray", binary = FALSE), k = 2, eig = TRUE)
+RLS_pcoa_df <- tibble(Sample = rownames(RLS_pcoa$points), x = RLS_pcoa$points[,1], y = RLS_pcoa$points[,2])
+RLS_pcoa_df <- bind_cols(RLS_pcoa_df, fish_site_metadata_sub)
+levels(RLS_pcoa_df$Ecosystem)[3] <- "Coral reef"
+RLS_pcoa_df$Habitat <- RLS_pcoa_df$Ecosystem
+
+
+RLS_pcoa_plot <- ggplot(data = RLS_pcoa_df) +
+  geom_point(mapping = aes(x = x, y = y, color = Habitat), size = 4, alpha = 0.70) +
+  #viridis::scale_color_viridis() + # sorry, but the LaCroix color palettes are too much fun.
+  #scale_color_gradientn(colors = lacroix_palette("PeachPear")) +
+  #geom_label_repel(mapping = aes(x = x, y = y, label = label, color = year), force = 5) +
+  xlab(paste0("PCoA axis 1: ", round(RLS_pcoa$eig[1] / sum(RLS_pcoa$eig) * 100, digits = 1), "%")) +
+  ylab(paste0("PCoA axis 2: ", round(RLS_pcoa$eig[2] / sum(RLS_pcoa$eig) * 100, digits = 1), "%")) +
+  ggtitle("a") +
+  scale_color_brewer(palette = 'Set1') +
+  theme_minimal() +
+  theme(
+    text = element_text(
+      family = "Open Sans" # This is a freely available Google font that I imported into R with the 'extrafont' library.
+    ),
+    plot.title = element_text(
+      face="bold",
+      size = 30,
+      vjust = -3,
+      hjust = 0.05)
+  )
+RLS_pcoa_plot
+
+ggsave(filename = "output/RLS_pcoa.png", plot = RLS_pcoa_plot, dpi = "retina", width = 5, height = 5, units = "in")
+
+
+
+## Fish eDNA
+eDNA_fish_vegan <- vegan_otu(eDNA_fish.ps)
+eDNA_fish_vegan <- eDNA_fish_vegan[rowSums(eDNA_fish_vegan) > 0,] #remove sites with 0 fish reads
+eDNA_fish_bc <- vegdist(eDNA_fish_vegan, method = "bray")
+#eDNA_fish_ord <- metaMDS(eDNA_fish_bc, k = 2, trymin = 100, trymax = 800, binary = FALSE)
+eDNA_fish_pcoa <- cmdscale(eDNA_fish_bc, k = 2, eig = TRUE)
+eDNA_fish_pcoa_df <- tibble(Sample = rownames(eDNA_fish_pcoa$points), x = eDNA_fish_pcoa$points[,1], y = eDNA_fish_pcoa$points[,2])
+eDNA_fish_pcoa_df$Ecosystem <- sample_data_renamed$Ecosystem[match(eDNA_fish_pcoa_df$Sample,rownames(sample_data_renamed))]
+eDNA_fish_pcoa_df$BayRegion <- sample_data_renamed$BayRegion[match(eDNA_fish_pcoa_df$Sample,rownames(sample_data_renamed))]
+eDNA_fish_pcoa_df$Habitat <- eDNA_fish_pcoa_df$Ecosystem
+
+eDNA_fish_pcoa_plot <- ggplot(data = eDNA_fish_pcoa_df) +
+  geom_point(mapping = aes(x = x, y = y, color = Habitat), size = 4, alpha = 0.70) +
+  #viridis::scale_color_viridis() + # sorry, but the LaCroix color palettes are too much fun.
+  #scale_color_gradientn(colors = lacroix_palette("PeachPear")) +
+  #geom_label_repel(mapping = aes(x = x, y = y, label = label, color = year), force = 5) +
+  xlab(paste0("PCoA axis 1: ", round(eDNA_fish_pcoa$eig[1] / sum(eDNA_fish_pcoa$eig) * 100, digits = 1), "%")) +
+  ylab(paste0("PCoA axis 2: ", round(eDNA_fish_pcoa$eig[2] / sum(eDNA_fish_pcoa$eig) * 100, digits = 1), "%")) +
+  ggtitle("b") +
+  scale_color_brewer(palette = 'Set1') +
+  theme_minimal() +
+  theme(
+    text = element_text(
+      family = "Open Sans" # This is a freely available Google font that I imported into R with the 'extrafont' library.
+    ),
+    plot.title = element_text(
+      face="bold",
+      size = 30,
+      vjust = -3,
+      hjust = 0.05)
+  )
+eDNA_fish_pcoa_plot
+ggsave(eDNA_fish_pcoa_plot, filename = "output/eDNA_fish_PCoA.png", dpi = "retina", width = 5, height = 5, units = "in")
 
 ## Metazoan eDNA
 curated_edna_metadata_tab <- as_tibble(sample_data(meta_curated_bocas_edna.ps.tr))
 
 meta_OTUs <- vegan_otu(meta_curated_bocas_edna.ps.tr)
+meta_bc <- vegdist(meta_OTUs, distance = "bray", binary = FALSE)
+meta_pcoa <- cmdscale(meta_bc, k = 2, eig = TRUE)
 meta_nmds <- vegan::metaMDS(meta_OTUs, distance = "bray", k = 3, trymin = 100, trymax = 800, binary = FALSE)
 meta_nmds_2d <- vegan::metaMDS(meta_OTUs, distance = "bray", k = 2, trymin = 100, trymax = 800, binary = FALSE)
 curated_meta_nmds_df <- cbind(meta_nmds$points, curated_edna_metadata_tab)
@@ -585,7 +661,74 @@ if (use_plotly_cloud == TRUE) {
 }
 
 
+# eDNA metazoan PCoA
+meta_pcoa <- cmdscale(meta_bc, k = 2, eig = TRUE)
+meta_pcoa_df <- tibble(Sample = rownames(meta_pcoa$points), x = meta_pcoa$points[,1], y = meta_pcoa$points[,2])
+meta_pcoa_df <- bind_cols(meta_pcoa_df, curated_edna_metadata_tab)
+meta_pcoa_df$Habitat <- meta_pcoa_df$Ecosystem
 
+meta_pcoa_plot <- ggplot(data = meta_pcoa_df) +
+  geom_point(mapping = aes(x = x, y = y, color = Habitat), size = 4, alpha = 0.70) +
+  #viridis::scale_color_viridis() + # sorry, but the LaCroix color palettes are too much fun.
+  #scale_color_gradientn(colors = lacroix_palette("PeachPear")) +
+  #geom_label_repel(mapping = aes(x = x, y = y, label = label, color = year), force = 5) +
+  xlab(paste0("PCoA axis 1: ", round(meta_pcoa$eig[1] / sum(meta_pcoa$eig) * 100, digits = 1), "%")) +
+  ylab(paste0("PCoA axis 2: ", round(meta_pcoa$eig[2] / sum(meta_pcoa$eig) * 100, digits = 1), "%")) +
+  ggtitle("c") +
+  scale_color_brewer(palette = 'Set1') +
+  theme_minimal() +
+  theme(
+    text = element_text(
+      family = "Open Sans" # This is a freely available Google font that I imported into R with the 'extrafont' library.
+    ),
+    plot.title = element_text(
+      face="bold",
+      size = 30,
+      vjust = -3,
+      hjust = 0.05)
+  )
+meta_pcoa_plot
+
+ggsave(filename = "output/meta_pcoa.png", plot = meta_pcoa_plot, dpi = "retina", width = 5, height = 5, units = "in")
+
+
+# CCAs #### IN-PROGRESS ######
+
+std_env_var <- read.csv("data/RLS_metadata_updated.csv") %>% #Load standardized metadata file from Elaine
+  filter( Site != "PPR") # Site PPR has no sponge AFDW
+std_env_var$mangrove_AGB_Z = scale(std_env_var$mangrove_AG_biomass, center = TRUE, scale = TRUE)
+  
+HAS_sheet <- readxl::read_excel("data/HAS_07072017.xlsx") %>% 
+  dplyr::rename(site_code = `Site Abbrev.`, HAS_score = `HAS score`) %>%
+  group_by(site_code) %>%
+  summarize(mean_HAS = mean(HAS_score))
+HAS_sheet$HAS_score_z <- as.vector(scale(HAS_sheet$mean_HAS, center = TRUE, scale = TRUE))
+HAS_sheet$HAS_score_z
+
+
+mangrove_env <- std_env_var %>%
+  filter(Habitat == "M") %>%
+  column_to_rownames(var = "Subsite")
+
+seagrass_env <- std_env_var %>%
+  filter(Habitat == "S") %>%
+  column_to_rownames(var = "Subsite")
+
+mangrove_env$HAS_score_z <- HAS_sheet$HAS_score_z[match(mangrove_env$Site, HAS_sheet$site_code)]
+mangrove_env_trimmed <- mangrove_env[,c(5,7,8)]
+
+mangrove_bocas_edna <- meta_curated_bocas_edna.ps.tr %>%
+  subset_samples(Ecosystem == "Mangrove" & Site %in% mangrove_env$Site) %>%
+  merge_samples("Site") %>%
+  #subset_samples(site_code3 != "SCR-M") %>% #remove outlier
+  filter_taxa( function (x) sum(x) > 0, TRUE) %>%
+  transform_sample_counts(function(x) x / sum(x)) %>% 
+  filter_taxa( filterfun(kOverA(3,5e-5)), TRUE)
+
+mangrove_otu_for_cca <- vegan_otu(mangrove_bocas_edna)
+mangrove_cca <- cca(mangrove_otu_for_cca, mangrove_env_trimmed)
+plot(mangrove_cca, scaling = 2, main = "Mangrove eDNA (metazoan) normal CCA", xlab = paste0("CCA1 [", round(mangrove_cca$CCA$eig[1]/sum(mangrove_cca$CCA$eig) * 100, digits = 2), "%]"), ylab = paste0("CCA2 [", round(mangrove_cca$CCA$eig[2]/sum(mangrove_cca$CCA$eig) * 100, digits = 2), "%]"))
+vegan:::text.cca(mangrove_cca)
 
 
 # PERMANOVAs --------------------------------------------
@@ -806,13 +949,7 @@ res_to_tsv(eDNA_fish_bay_results, alpha = 1, filename = "output/eDNA_fish_bay.ts
 ### Metazoa ########################
 
 # Figure 5a, eDNA metazoa, mangrove vs seagrass
-eDNA_meta.ps <- curated_bocas_edna.ps %>%
-  subset_samples(Fraction == "eDNA" & Sample == "Primary") %>% #filter out control, negative and mock samples # if desired, we can also use  `& Ecosystem != "Dock"` to remove docks
-  merge_samples("site_code3", fun = mode) %>% # Doesn't matter what the `fun` argument is set to, I think, we overwrite it in the next step
-  subset_taxa(Kingdom == "Metazoa") %>% # Metazoan only
-  filter_taxa(function (x) sum(x) > 0, TRUE)# Remove taxa that are no longer represented because of subsetting
 
-sample_data(eDNA_meta.ps) <- sample_data(sample_data_renamed)
 
 eDNA_meta.MS.ps <- eDNA_meta.ps %>%
   subset_samples(Ecosystem %in% c("Seagrass","Mangrove")) %>% # Metazoan only
