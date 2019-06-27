@@ -9,3 +9,4 @@ output/randomforest_predictor_importance.txt
 Differential_Abundance___Heatmap.r
 Summary_table.R
 *.bak
+.Rapp.history
