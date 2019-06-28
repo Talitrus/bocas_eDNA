@@ -230,7 +230,7 @@ library(data.table)
   
   breaksList = seq(0,20, by=1)
   ann_colors = list(Habitat = c(Sand = "yellow", Reef= "orange"))
-  pheatmap(assay(eDNA_RSa_vst)[eDNA_RSa_select.p,], color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)),breaks=breaksList,cellwidth = 25, cellheight=25, cluster_rows = FALSE,show_rownames = TRUE, cluster_cols=FALSE, annotation_colors = ann_colors, annotation_col=eDNA_RSa_df, fontsize = 20, filename = "eDNA_Habitat_fish_RSa_Heatmap_20.jpg", gaps_col=6,width=12,height=20)
+  pheatmap(assay(eDNA_RSa_vst)[eDNA_RSa_select.p,], color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)),breaks=breaksList,cellwidth = 25, cellheight=25, cluster_rows = FALSE,show_rownames = TRUE, cluster_cols=FALSE, annotation_colors = ann_colors, annotation_col=eDNA_RSa_df, fontsize = 20, filename = "eDNA_Habitat_fish_RSa_Heatmap_20.jpg", gaps_col=6,width=12,height=10)
   
 ## eDNA metazoans - HABITAT ## 
   
@@ -351,8 +351,8 @@ library(data.table)
   summary(eDNA_fish_L_sigtab)
   eDNA_fish_L_sigtab
   
-  # Plot the metazoan taxa in order of ascending p-value (decreasing significance)
-  eDNA_fish_L_select.p = order(eDNA_fish_L_res$padj)[1:50]
+  # Plot the top 20 fish taxa in order of ascending p-value (decreasing significance)
+  eDNA_fish_L_select.p = order(eDNA_fish_L_res$padj)[1:20]
   # create Location annotation
   Location = colData(eDNA_fish_L)[,c("BayRegion1")]
   eDNA_fish_L_df = as.data.frame(Location)
@@ -361,5 +361,5 @@ library(data.table)
   row.names(eDNA_fish_L_vst) = eDNA_fish_taxa$ID
   
   breaksList = seq(0,20, by=1)
-  pheatmap(assay(eDNA_fish_L_vst)[eDNA_fish_L_select.p,], color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)),breaks=breaksList,cellwidth = 25, cellheight=25, cluster_rows = FALSE,show_rownames = TRUE, cluster_cols=FALSE, annotation_colors = ann_colors, annotation_col=eDNA_fish_L_df, fontsize = 20, filename = "eDNA_Location_fish_Heatmap_50.jpg", gaps_col=c(6,11,23,37),width=25,height=20)
+  pheatmap(assay(eDNA_fish_L_vst)[eDNA_fish_L_select.p,], color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)),breaks=breaksList,cellwidth = 25, cellheight=25, cluster_rows = FALSE,show_rownames = TRUE, cluster_cols=FALSE, annotation_colors = ann_colors, annotation_col=eDNA_fish_L_df, fontsize = 20, filename = "eDNA_Location_fish_Heatmap_50.jpg", gaps_col=c(6,11,23,37),width=24,height=15)
   
