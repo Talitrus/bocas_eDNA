@@ -10,3 +10,10 @@ Differential_Abundance___Heatmap.r
 Summary_table.R
 *.bak
 .Rapp.history
+*_forCCA.RDS
+*.png
+*.jpg
+*.ai
+*.psd
+*.log
+*.svg

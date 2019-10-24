@@ -25,6 +25,7 @@ if (use_h2o == TRUE) {
 }
 library(DESeq2)
 library(extrafont) # I make use of the free font Open Sans, so you'll need that to have the code run as-is. Feel free to edit out the custom font for your own purposes.
+library(robis) # for checking detected species against OBIS records.
 
 # Functions --------------
 deseq_wrapper <- function(ps, formula = ~1, sfType = "poscounts", fitType = "parametric", test = "Wald") { # wrapper, phyloseq object as first arg
@@ -112,15 +113,15 @@ plotUpDownSigTaxa_eco <- function(results, rld, metadata_cols = "Ecosystem", nta
   if (type == "sig") {
     select_taxa <- rownames(head(results[ order( results$padj ), ], n=ntaxa))
     results_subset <- results[select_taxa,]
-    #select_taxa <- rownames(results[order(results$log2FoldChange),])
+    select_taxa <- rownames(results_subset[order(results_subset$log2FoldChange),])
   } else if (type == "down") {
     select_taxa <- rownames(head(results[ order( results$log2FoldChange ), ], n=ntaxa))
     results_subset <- results[select_taxa,]
-    select_taxa <- rownames(results[order(results$log2FoldChange),])
+    select_taxa <- rownames(results_subset[order(results_subset$log2FoldChange),])
   } else if (type == "up") {
     select_taxa <- rownames(head(results[ order( -results$log2FoldChange ), ], n=ntaxa))
     results_subset <- results[select_taxa,]
-    select_taxa <- rownames(results[order(results$log2FoldChange),])
+    select_taxa <- rownames(results_subset[order(results_subset$log2FoldChange),])
   } else if (type == "magnitude") {
     select_taxa <- rownames(head(results[ order( -abs(results$log2FoldChange )), ], n=ntaxa))
     results_subset <- results[select_taxa,]
@@ -162,7 +163,7 @@ fish_site_metadata_location <- "data/fish_site_metadata.tsv" #Metadata for RLS s
 fish_taxonomy_location <- "data/RLS_fish_taxonomy.csv" #Taxonomic lineage info file for RLS fish taxa
 unprocessed_bocasDB_file <- "data/bocas_db_metazoa_20190307.txt" # Bocas species DB (metazoans only) as manually scraped from the STRI website.
 GISD_data_location <- "data/GISD_04112019.csv" # Global invasive species database search for Caribbean invasives.
-
+replacement_metadata <- "data/metadata_table_eDNA.csv" # Updated sample metadata
 # Locations to write to:
 metazoan_taxa_importance_file_location <- "output/randomforest_predictor_importance.txt" # Random forest feature importance file location
 
@@ -174,12 +175,57 @@ eDNA_spp_file <- "output/eDNA_metazoan_species.tsv" # species-level identificati
 
 # Load phyloseq --------------------
 curated_bocas_edna.ps <- readRDS(eDNA_phyloseq_location) # DADA2, LULU-processed phyloseq object
+EWS_metadata <- read.csv(replacement_metadata, header = 1, row.names = 1)
+sample_data(curated_bocas_edna.ps)$BayRegion1 <- EWS_metadata$BayRegion1[match(sample_data(curated_bocas_edna.ps)$Site, EWS_metadata$Site)] # Adding exposure variable by hand from updated metadata file.
 tax <- tax_table(curated_bocas_edna.ps)
 sample_data_renamed <- sample_data(curated_bocas_edna.ps) %>% # we create this file to manually preserve some of the metadata to use after split samples are merged in the next chunk.
   as.data.frame() %>%
   remove_rownames() %>%
   filter(!duplicated(site_code3)) %>%
   column_to_rownames(var = "site_code3") # Rownames are set to the "site_code3", e.g. CCR-SA, PST-RB since this is what the new sample names become after merging
+
+#SRA metadata preparation ---------------------------
+for_SRA <- sample_data(curated_bocas_edna.ps) %>% # for SRA submission
+  as.data.frame() %>%
+  mutate(sample_name = paste0("BCS", Library, "-", Adapter.Order, "-", Primer.Tag.Number, "_", MLID), organism = "seawater metagenome", geo_loc_name = "Panama: Bocas del Toro", isolation_source = "seawater", ref_biomaterial = "", bioproject_accession = "", host = "", rel_to_oxygen = "", samp_collect_device = "", samp_mat_process = "", samp_size = "1 liter", lat_lon = "", description = "", replicate = "") %>%
+  select(sample_name, sample_title = Site.Code, bioproject_accession, organism, host, isolation_source, collection_date = Sample.Date, geo_loc_name, lat_lon, ref_biomaterial, rel_to_oxygen, samp_collect_device, samp_mat_process, samp_size, source_material_id = MLID, replicate) %>%
+  filter(sample_title != "Mock-Mock")
+for_SRA$lat_lon = paste(fish_site_metadata_sub$Latitude[match(str_remove_all(for_SRA$sample_title, "[\\d.]"), fish_site_metadata_sub$Site.Code)], "N", str_remove(fish_site_metadata_sub$Longitude[match(str_remove_all(for_SRA$sample_title, "[\\d.]"), fish_site_metadata_sub$Site.Code)], "-"), "W")
+for_SRA
+
+#write_tsv(for_SRA, "~/Desktop/for_SRA.txt")
+
+SRA_filenames <- read_lines("~/Desktop/eDNA_SRA_submission_list.txt")
+for_SRA2 <- sample_data(curated_bocas_edna.ps) %>% # for SRA submission
+  as.data.frame() %>%
+  filter(Site.Code != "Mock-Mock") %>%
+  mutate(
+    sample_name = paste0("BCS", Library, "-", Adapter.Order, "-", Primer.Tag.Number, "_", MLID),
+    #library_ID = paste0("BCS", Library),
+    library_ID = paste0("BCS", Library, "-", Adapter.Order, "-", Primer.Tag.Number, "_", MLID),
+    title = paste0("COI amplicon sequencing of seawater from Bocas del Toro, Panama: ", Site, ": ", Ecosystem),
+    library_strategy = "AMPLICON",
+    library_source = "METAGENOMIC",
+    library_selection = "PCR",
+    library_layout = "paired",
+    platform = "ILLUMINA",
+    instrument_model = "Illumina MiSeq",
+    design_description = "Illumina TruSeq ligation library preparation of PCR product with indexed primers",
+    filetype = "fastq",
+    filename = paste0("BCS", Library, "-", Adapter.Order, "-", Primer.Tag.Number, "_", MLID, "_1.fastq.gz"),
+    filename2 = paste0("BCS", Library, "-", Adapter.Order, "-", Primer.Tag.Number, "_", MLID, "_2.fastq.gz"),
+    filename3 = "",
+    filename4 = "",
+    filename5 = "",
+    filename6 = ""
+    ) %>%
+  select(sample_name, library_ID, title, library_strategy, library_source, library_selection, library_layout, platform, instrument_model, design_description, filetype, filename, filename2) %>%
+  filter(filename %in% SRA_filenames & sample_name %in% for_SRA$sample_name)
+
+
+which(duplicated(for_SRA2 %>% select(sample_name, library_ID, library_strategy, library_layout, instrument_model))) # manually clean up duplicates, if any
+
+write_tsv(for_SRA2, "~/Desktop/for_SRA2.txt")
 
 
 # Transform data -----------------------------------
@@ -208,6 +254,10 @@ fish_data <- read_csv(RLS_survey_location) %>%
   mutate(Code = str_to_lower(Code)) %>% # Code is an abbrev. for species, lowercased for consistency
   unique() # One row is an exact duplicate, likely an error. Removing duplicates
 fish_data$Species[fish_data$Species == "Clupeid spp."] <- "Clupeidae" # manual correction
+fish_data$taxon_level <- "Species"
+fish_data$taxon_level[str_detect(fish_data$Species, "dae")] <- "Family"
+fish_data$taxon_level[str_detect(fish_data$Species, "spp.")] <- "Genus"
+fish_data$taxon_level <- as.factor(fish_data$taxon_level)
 
 if(file.exists(fish_site_metadata_location)) { #If a metadata file exists, read it in
   # Currently, this is used because I manually added a column called BayRegion to the metadata file, which corresponds to "BayRegion" in the eDNA
@@ -260,7 +310,7 @@ fish_ps <- phyloseq(otu_table(as.matrix(fish_table), taxa_are_rows = FALSE), tax
 
 # Taxonomic composition -------------------------------------------
 
-# Superkingdom-level taxonomic statistics
+# Superkingdom-level taxonomic statistics -------------------
 skglom_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>% # Aggregate data into phylum-level.
   subset_samples(Fraction == "eDNA") %>% #filter out control, negative and mock samples, NOTE: currently includes non-primary samples
   tax_glom(taxrank = "Superkingdom")
@@ -282,7 +332,8 @@ tax[names(taxa_sums(kingglom_curated_bocas_edna.ps.tr)),]
 # How many Metazoan OTUs?
 meta_counts.ps <- curated_bocas_edna.ps %>%
   subset_samples(Fraction == "eDNA" & Sample == "Primary") %>% # Doesn't matter what the `fun` argument is set to, I think, we overwrite it in the next step
-  subset_taxa(Kingdom == "Metazoa")
+  subset_taxa(Kingdom == "Metazoa") %>%
+  filter_taxa( function (x) sum(x) > 0, TRUE)
 
 sum(sample_sums(meta_counts.ps))
 ntaxa(meta_counts.ps) 
@@ -297,7 +348,11 @@ phyglom_curated_bocas_edna.ps.tr <- curated_bocas_edna.ps %>% # Aggregate data i
   subset_samples(Fraction == "eDNA") %>% #filter out control, negative and mock samples, NOTE: currently includes non-primary samples
   tax_glom(taxrank = "Phylum") %>%
   transform_sample_counts(function(x) x / sum(x)) %>%
-  filter_taxa_to_other(function(x) max(x) > 0.03) # All taxa that are never > 0.03 rel. abun. merged into "Other taxa"
+  merge_samples("site_code3", fun = "mode") %>%
+  filter_taxa_to_other(function(x) max(x) > 0.10)  %>%# All taxa that are never > 0.05 rel. abun. merged into "Other taxa"
+  transform_sample_counts(function(x) x / sum(x))
+sample_data(phyglom_curated_bocas_edna.ps.tr) <- sample_data(sample_data_renamed)
+
 
 edna_phylum <- plot_ly( data = psmelt(phyglom_curated_bocas_edna.ps.tr), x = ~Abundance, y = ~Sample, color =~ Phylum, type = 'bar', colors = "Paired") %>%
   layout(barmode = "stack",
@@ -310,11 +365,18 @@ edna_phylum <- plot_ly( data = psmelt(phyglom_curated_bocas_edna.ps.tr), x = ~Ab
                       ), 
          yaxis = list(title = "Samples",
                       categoryorder = "category ascending",
-                      showticklabels = FALSE,
+                      showticklabels = TRUE,
                       showgrid = FALSE
                       )
          )
 edna_phylum
+
+edna_phylum_gg <- ggplot(psmelt(phyglom_curated_bocas_edna.ps.tr), mapping = aes( y = Abundance, x = Sample, fill = Phylum)) +
+  geom_bar( stat = "identity", position = "stack") +
+  scale_fill_manual(values = tableau_color_pal('Tableau 20')(20)) +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0))
+edna_phylum_gg
 
 if (use_plotly_cloud == TRUE) {
   api_create(edna_phylum, filename = "bocas/edna/tax_comp/edna_phylum", sharing = plotly_sharing_setting)
@@ -542,12 +604,12 @@ RLS_nmds_df <- cbind(RLS_nmds$points,fish_site_metadata_sub)
 RLS_nmds_2ddf <- cbind(RLS_nmds_2d$points,fish_site_metadata_sub)
 
 RLS_nmds_p <- plot_ly(type = 'scatter3d', mode = 'markers', data =RLS_nmds_df, x = ~MDS1, y = ~MDS2, z = ~MDS3,
-                      text = ~Site, color = ~Ecosystem, symbol = ~BayRegion, 
+                      text = ~Site, color = ~Habitat, symbol = ~BayRegion1, 
                       marker = list(opacity = 0.75), colors = "Set1", symbols = c('circle', 'circle-open','x', 'circle-open', 'square')) %>%
   layout(title= paste("RLS Bray-Curtis NMDS, Stress:", round(RLS_nmds$stress, digits = 4)))
 
 RLS_nmds_2d_p <- plot_ly(type = 'scatter', mode = 'markers', data = as.data.frame(RLS_nmds_2ddf), x = ~MDS1, y = ~MDS2,
-                         text = ~Site.Name, color = ~Ecosystem, symbol = ~BayRegion, 
+                         text = ~Site.Name, color = ~Habitat, symbol = ~BayRegion1, 
                          marker = list(opacity = 0.75, size = 16), colors = "Set1", symbols = c('circle', 'diamond-open-dot','x', 'square')) %>%
   layout(title= paste("RLS Bray-Curtis NMDS, Stress:", round(RLS_nmds_2d$stress, digits = 4)))
 
@@ -564,12 +626,13 @@ if (use_plotly_cloud == TRUE) {
 RLS_pcoa <- cmdscale(vegdist(fish_table, method = "bray", binary = FALSE), k = 2, eig = TRUE)
 RLS_pcoa_df <- tibble(Sample = rownames(RLS_pcoa$points), x = RLS_pcoa$points[,1], y = RLS_pcoa$points[,2])
 RLS_pcoa_df <- bind_cols(RLS_pcoa_df, fish_site_metadata_sub)
-levels(RLS_pcoa_df$Ecosystem)[3] <- "Coral reef"
-RLS_pcoa_df$Habitat <- RLS_pcoa_df$Ecosystem
+RLS_pcoa_df$Habitat <- factor(x = as.character(RLS_pcoa_df$Habitat), levels = c("Reef", "Dock", "Mangrove", "Seagrass", "Sand"))
+levels(RLS_pcoa_df$Habitat)[1] <- "Coral reef"
+levels(RLS_pcoa_df$Habitat)[5] <- "Unvegetated"
 
 
 RLS_pcoa_plot <- ggplot(data = RLS_pcoa_df) +
-  geom_point(mapping = aes(x = x, y = y, color = Habitat), size = 4, alpha = 0.70) +
+  geom_point(mapping = aes(x = x, y = y, color = Habitat, shape = BayRegion1), size = 4, alpha = 0.70) +
   #viridis::scale_color_viridis() + # sorry, but the LaCroix color palettes are too much fun.
   #scale_color_gradientn(colors = lacroix_palette("PeachPear")) +
   #geom_label_repel(mapping = aes(x = x, y = y, label = label, color = year), force = 5) +
@@ -577,6 +640,10 @@ RLS_pcoa_plot <- ggplot(data = RLS_pcoa_df) +
   ylab(paste0("PCoA axis 2: ", round(RLS_pcoa$eig[2] / sum(RLS_pcoa$eig) * 100, digits = 1), "%")) +
   ggtitle("a") +
   scale_color_brewer(palette = 'Set1') +
+  labs(
+    color = "Habitat",
+    shape = "Exposure"
+  ) +
   theme_minimal() +
   theme(
     text = element_text(
@@ -595,18 +662,19 @@ ggsave(filename = "output/RLS_pcoa.png", plot = RLS_pcoa_plot, dpi = "retina", w
 
 
 ## Fish eDNA
-eDNA_fish_vegan <- vegan_otu(eDNA_fish.ps)
-eDNA_fish_vegan <- eDNA_fish_vegan[rowSums(eDNA_fish_vegan) > 0,] #remove sites with 0 fish reads
+eDNA_fish_vegan <- vegan_otu(eDNA_fish.ps.tr)
+eDNA_fish_vegan <- eDNA_fish_vegan[!is.na(rowSums(eDNA_fish_vegan)),] #remove sites with 0 fish reads
 eDNA_fish_bc <- vegdist(eDNA_fish_vegan, method = "bray")
 #eDNA_fish_ord <- metaMDS(eDNA_fish_bc, k = 2, trymin = 100, trymax = 800, binary = FALSE)
 eDNA_fish_pcoa <- cmdscale(eDNA_fish_bc, k = 2, eig = TRUE)
 eDNA_fish_pcoa_df <- tibble(Sample = rownames(eDNA_fish_pcoa$points), x = eDNA_fish_pcoa$points[,1], y = eDNA_fish_pcoa$points[,2])
 eDNA_fish_pcoa_df$Ecosystem <- sample_data_renamed$Ecosystem[match(eDNA_fish_pcoa_df$Sample,rownames(sample_data_renamed))]
 eDNA_fish_pcoa_df$BayRegion <- sample_data_renamed$BayRegion[match(eDNA_fish_pcoa_df$Sample,rownames(sample_data_renamed))]
+eDNA_fish_pcoa_df$BayRegion1 <- sample_data_renamed$BayRegion1[match(eDNA_fish_pcoa_df$Sample,rownames(sample_data_renamed))]
 eDNA_fish_pcoa_df$Habitat <- eDNA_fish_pcoa_df$Ecosystem
 
 eDNA_fish_pcoa_plot <- ggplot(data = eDNA_fish_pcoa_df) +
-  geom_point(mapping = aes(x = x, y = y, color = Habitat), size = 4, alpha = 0.70) +
+  geom_point(mapping = aes(x = x, y = y, color = Habitat, shape = BayRegion1), size = 4, alpha = 0.70) +
   #viridis::scale_color_viridis() + # sorry, but the LaCroix color palettes are too much fun.
   #scale_color_gradientn(colors = lacroix_palette("PeachPear")) +
   #geom_label_repel(mapping = aes(x = x, y = y, label = label, color = year), force = 5) +
@@ -615,6 +683,10 @@ eDNA_fish_pcoa_plot <- ggplot(data = eDNA_fish_pcoa_df) +
   ggtitle("b") +
   scale_color_brewer(palette = 'Set1') +
   theme_minimal() +
+  labs(
+    color = "Habitat",
+    shape = "Exposure"
+  ) +
   theme(
     text = element_text(
       family = "Open Sans" # This is a freely available Google font that I imported into R with the 'extrafont' library.
@@ -666,9 +738,10 @@ meta_pcoa <- cmdscale(meta_bc, k = 2, eig = TRUE)
 meta_pcoa_df <- tibble(Sample = rownames(meta_pcoa$points), x = meta_pcoa$points[,1], y = meta_pcoa$points[,2])
 meta_pcoa_df <- bind_cols(meta_pcoa_df, curated_edna_metadata_tab)
 meta_pcoa_df$Habitat <- meta_pcoa_df$Ecosystem
+meta_pcoa_df
 
 meta_pcoa_plot <- ggplot(data = meta_pcoa_df) +
-  geom_point(mapping = aes(x = x, y = y, color = Habitat), size = 4, alpha = 0.70) +
+  geom_point(mapping = aes(x = x, y = y, color = Habitat, shape = BayRegion1), size = 4, alpha = 0.70) +
   #viridis::scale_color_viridis() + # sorry, but the LaCroix color palettes are too much fun.
   #scale_color_gradientn(colors = lacroix_palette("PeachPear")) +
   #geom_label_repel(mapping = aes(x = x, y = y, label = label, color = year), force = 5) +
@@ -676,6 +749,10 @@ meta_pcoa_plot <- ggplot(data = meta_pcoa_df) +
   ylab(paste0("PCoA axis 2: ", round(meta_pcoa$eig[2] / sum(meta_pcoa$eig) * 100, digits = 1), "%")) +
   ggtitle("c") +
   scale_color_brewer(palette = 'Set1') +
+  labs(
+    color = "Habitat",
+    shape = "Exposure"
+  ) +
   theme_minimal() +
   theme(
     text = element_text(
@@ -695,7 +772,7 @@ ggsave(filename = "output/meta_pcoa.png", plot = meta_pcoa_plot, dpi = "retina",
 # CCAs #### IN-PROGRESS ######
 
 std_env_var <- read.csv("data/RLS_metadata_updated.csv") %>% #Load standardized metadata file from Elaine
-  filter( Site != "PPR") # Site PPR has no sponge AFDW
+  filter( Site != "PJN") # Site PJN has no sponge AFDW
 std_env_var$mangrove_AGB_Z = scale(std_env_var$mangrove_AG_biomass, center = TRUE, scale = TRUE)
   
 HAS_sheet <- readxl::read_excel("data/HAS_07072017.xlsx") %>% 
@@ -724,19 +801,31 @@ mangrove_bocas_edna <- meta_curated_bocas_edna.ps.tr %>%
   filter_taxa( function (x) sum(x) > 0, TRUE) %>%
   transform_sample_counts(function(x) x / sum(x)) %>% 
   filter_taxa( filterfun(kOverA(3,5e-5)), TRUE)
+saveRDS(mangrove_bocas_edna %>% vegan_otu(), "~/Desktop/mangrove_metazoan_forCCA.RDS", version = 2)
+
+mangrove_fishes_edna <- mangrove_bocas_edna %>%
+  subset_taxa(Class == "Actinopteri") %>%
+  vegan_otu()
+saveRDS(mangrove_fishes_edna, file = "~/Desktop/mangrove_fishes_otutab_forCCA.RDS", version = 2)
 
 mangrove_otu_for_cca <- vegan_otu(mangrove_bocas_edna)
 mangrove_cca <- cca(mangrove_otu_for_cca, mangrove_env_trimmed)
 plot(mangrove_cca, scaling = 2, main = "Mangrove eDNA (metazoan) normal CCA", xlab = paste0("CCA1 [", round(mangrove_cca$CCA$eig[1]/sum(mangrove_cca$CCA$eig) * 100, digits = 2), "%]"), ylab = paste0("CCA2 [", round(mangrove_cca$CCA$eig[2]/sum(mangrove_cca$CCA$eig) * 100, digits = 2), "%]"))
 vegan:::text.cca(mangrove_cca)
 
+sample_data(fish_ps)$site_abbrev <- substr(sample_data(fish_ps)$Site.Code, 1,3)
+mangrove_rls_otutab_forCCA <- fish_ps %>%
+  subset_samples(Ecosystem == "Mangrove" & site_abbrev %in% mangrove_env$Site) %>%
+  merge_samples("site_abbrev") %>% vegan_otu()
+saveRDS(mangrove_rls_otutab_forCCA, "~/Desktop/mangrove_RLS_fishes_otutab_forCCA.RDS", version = 2)
+saveRDS(tax, "~/Desktop/tax.RDS", version = 2)
 
 # PERMANOVAs --------------------------------------------
 
 # RLS fish survey
 
-RLS_permanova_nostrata <- adonis2(formula = fish_table ~ BayRegion * Ecosystem + Diver + Site * Ecosystem, data = fish_site_metadata_sub, method = "bray")
-RLS_permanova_strata <- adonis2(formula = fish_table ~ BayRegion / Ecosystem, strata = Site, data = fish_site_metadata_sub, method = "bray", strata = "BayRegion")
+RLS_permanova_nostrata <- adonis2(formula = fish_table ~ BayRegion1 * Habitat + Diver + Site * Habitat, data = fish_site_metadata_sub, method = "bray")
+RLS_permanova_strata <- adonis2(formula = fish_table ~ BayRegion1 / Habitat, strata = Site, data = fish_site_metadata_sub, method = "bray", strata = "BayRegion")
 #adonis2(formula = fish_table ~ Location * Habitat + Diver + Site * Habitat, data = fish_site_metadata_sub, method = "raup", binary = TRUE)
 
 # Plotting code example.
@@ -750,13 +839,18 @@ if (use_plotly_cloud == TRUE) {
 
 # Metazoan eDNA OTUs
 # `BayRegion` in the metazoan eDNA data is the same as `Location`
-metazoan_permanova_strata <- adonis2(formula = meta_OTUs ~ BayRegion * Ecosystem, strata = Site, data = curated_edna_metadata_tab, method = "bray")
-metazoan_permanova_nostrata <- adonis2(formula = meta_OTUs ~ BayRegion * Ecosystem + Site * Ecosystem, data = curated_edna_metadata_tab, method = "bray")
+metazoan_permanova_strata <- adonis2(formula = meta_OTUs ~ BayRegion1 * Ecosystem, strata = Site, data = curated_edna_metadata_tab, method = "bray")
+metazoan_permanova_nostrata <- adonis2(formula = meta_OTUs ~ BayRegion1 * Ecosystem + Site * Ecosystem, data = curated_edna_metadata_tab, method = "bray")
 #adonis2(formula = meta_OTUs ~ BayRegion * Ecosystem + Site * Ecosystem, data = curated_edna_metadata_tab, method = "raup", binary = TRUE)
 
 metazoan_permanova_nostrata_p <- plotly_permanova(metazoan_permanova_nostrata, name = "Metazoan eDNA") %>%
   layout(title = "Metazoan eDNA")
 metazoan_permanova_nostrata_p
+
+
+fish_edna_metadata_tab <- sample_data_renamed[match(rownames(eDNA_fish_vegan), rownames(sample_data_renamed)),]
+  
+edna_fish_permanova <- adonis2(formula = eDNA_fish_vegan ~ BayRegion1 * Ecosystem + Site * Ecosystem, data = fish_edna_metadata_tab, method = "bray")
 
 if (use_plotly_cloud == TRUE) {
   api_create(metazoan_permanova_nostrata_p, filename = "bocas/edna/permanova/metazoan_nostrata", sharing = plotly_sharing_setting)
@@ -809,7 +903,28 @@ if(file.exists(eDNA_spp_file)) {
   edna_species_tibble$in_bocas_db_raw = edna_species_tibble$species %in% bocas_metazoans$genspec
   edna_species_tibble[!is.na(edna_species_tsns),"accepted_tsn"] <- edna_species_accepted$acceptedtsn
   edna_species_tibble$in_bocas_db_acctsn = if_else(!is.na(edna_species_tibble$accepted_tsn), edna_species_tibble$accepted_tsn %in% bocas_metazoans$accepted_tsn, NA)
+  
+  #Retrieve OBIS data
+  bocas_obis <- occurrence(geometry = "POLYGON((-82.4276956975176 9.483301738315205,-82.04042763111136 9.534769749450925,-81.6366800725176 9.090268090466868,-81.6806253850176 8.903085532315446,-82.1805033147051 8.889517831162516,-82.5320658147051 9.383052428790267,-82.4276956975176 9.483301738315205))") %>% 
+    tibble::as_tibble()
+  obis_metazoans <- bocas_obis %>%
+    filter(kingdom == "Animalia")
+  obis_fishes <- obis_metazoans %>%
+    dplyr::filter( class == "Actinopterygii")
+  obis_uniq_metazoans <- tibble(scientificName = unique(obis_metazoans$scientificName))
+  obis_uniq_metazoans_tsns <- get_tsn(obis_uniq_metazoans$scientificName, ask = FALSE)
+  obis_uniq_metazoans$tsn <- obis_uniq_metazoans_tsns
+  obis_spp <- tibble(scientificName = sort(unique(bocas_obis$scientificName)))
+  obis_fishes_spp <- tibble( scientificName = sort(unique(obis_fishes$scientificName)))
+  obis_spp$tsn <- obis_uniq_metazoans$tsn[match(obis_spp$scientificName, obis_uniq_metazoans$scientificName)]
+  obis_spp_accepted_tsn <- itis_acceptname(obis_spp$tsn[!is.na(obis_spp$tsn)]) # left off here 
+  obis_spp$accepted_tsn[!is.na(obis_spp$tsn)] <- obis_spp_accepted_tsn$acceptedtsn
+  edna_species_tibble$in_obis_raw = edna_species_tibble$species %in% obis_spp$scientificName
+  edna_species_tibble$in_obis_tsn = edna_species_tibble$accepted_tsn %in% obis_spp$accepted_tsn
+  
+  
   edna_species_tibble$acctsn_or_raw_in_bdb <- edna_species_tibble$in_bocas_db_acctsn | edna_species_tibble$in_bocas_db_raw
+  edna_species_tibble$bdb_or_obis <- edna_species_tibble$in_bocas_db_acctsn | edna_species_tibble$in_bocas_db_raw | edna_species_tibble$in_obis_raw | edna_species_tibble$in_obis_tsn
   write_tsv(edna_species_tibble, eDNA_spp_file)
 }
 
@@ -819,11 +934,12 @@ if(file.exists(eDNA_spp_file)) {
 GISD <- read_delim(GISD_data_location, delim = ";")
 
 GISD[which(GISD$Species %in% edna_species_tibble$species),]
-edna_species_tibble[which(edna_species_tibble$species %in% GISD$Species),]
+View(edna_species_tibble[which(edna_species_tibble$species %in% GISD$Species),]) # Chthamalus proteus is listed as being native to the Caribbean by some sources and is so ignored.
 
 summary(curated_edna.ps.spp %>% get_sample(names(which(edna_species_names == "Mus musculus"))) > 0) # Example of how to inspect how many samples have Mus musculus counts
+which(curated_edna.ps.spp %>% get_sample(names(which(edna_species_names == "Mus musculus"))) > 0) #  which sites have this species
 
-
+sum(curated_edna.ps.spp %>% get_sample(names(which(edna_species_names == "Bugula neritina"))))
 
 # Checking RLS data against Bocas spp db, GISD ----------
 # IN-PROGRESS, INCOMPLETE
@@ -868,6 +984,44 @@ eDNA_fish.ps <- curated_bocas_edna.ps %>%
   filter_taxa(function (x) sum(x) > 0, TRUE)# Remove taxa that are no longer represented because of subsetting
 
 sample_data(eDNA_fish.ps) <- sample_data(sample_data_renamed)
+
+eDNA_fish.ps.tr <- eDNA_fish.ps %>%
+  transform_sample_counts( function(x) x / sum(x))
+# Quick fish stats ---------------
+
+#eDNA 
+fish_reads_tb <- tibble(site = sample_names(eDNA_fish.ps), reads = sample_sums(eDNA_fish.ps), habitat = sample_data(eDNA_fish.ps)@.Data[[13]], edna_richness = 0) %>% group_by(habitat)
+fish_edna_richness <- apply(eDNA_fish_vegan, 1, function(x) sum(x > 0, na.rm = TRUE))
+fish_reads_tb$edna_richness[which(fish_reads_tb$site %in% names(fish_edna_richness))] <- as.vector(fish_edna_richness)
+
+fish_read_stats <- summarize(fish_reads_tb, total_reads = sum(reads), sd = sd(reads), n = n(), variance = var(reads), average = mean(reads), avg_richness = mean(edna_richness), sd_richness = sd(edna_richness)) %>% mutate(std.err = sd / sqrt(n), std.err_richness = sd_richness / sqrt(n), se.reads = sd / sqrt(n))
+fish_read_stats
+
+# RLS
+rownames(fish_table) == rownames(fish_site_metadata_sub[match(rownames(fish_table), rownames(fish_site_metadata_sub)),])
+RLS_richness <- apply(fish_table, 1, function(x) sum(x > 0, na.rm = TRUE))
+fish_site_stats <- as_tibble(fish_site_metadata_sub[match(rownames(fish_table), rownames(fish_site_metadata_sub)),], rownames = "event") %>%
+  add_column(RLS_richness) %>%
+  group_by(Habitat) %>%
+  summarize(mean_richness = mean(RLS_richness), sd_richness = sd(RLS_richness), n = n()) %>%
+  mutate(se_richness = sd_richness / sqrt(n))
+
+# Metazoa 
+metazoa_vegan <- vegan_otu(eDNA_meta.ps)
+meta_reads_tb <- tibble(site = sample_names(eDNA_meta.ps), reads = sample_sums(eDNA_meta.ps), habitat = sample_data(eDNA_meta.ps)@.Data[[13]], edna_richness = 0) %>% group_by(habitat)
+meta_edna_richness <- apply(metazoa_vegan, 1, function(x) sum(x > 0, na.rm = TRUE))
+meta_reads_tb$edna_richness[which(meta_reads_tb$site %in% names(meta_edna_richness))] <- as.vector(meta_edna_richness)
+meta_reads_stats <- meta_reads_tb %>%
+  summarize(total_reads = sum(reads), sd = sd(reads), n = n(), variance = var(reads), average = mean(reads), avg_richness = mean(edna_richness), sd_richness = sd(edna_richness)) %>% mutate(std.err = sd / sqrt(n), std.err_richness = sd_richness / sqrt(n), se.reads = sd / sqrt(n))
+meta_reads_stats
+# Actinopteri and Chondrichthyes ------------------------------------------
+
+eDNA_fish2.ps <- curated_bocas_edna.ps %>% # Actinopteri and Chondrichthyes
+  subset_samples(Fraction == "eDNA" & Sample == "Primary") %>% #filter out control, negative and mock samples # if desired, we can also use  `& Ecosystem != "Dock"` to remove docks
+  merge_samples("site_code3", fun = mode) %>% # Doesn't matter what the `fun` argument is set to, I think, we overwrite it in the next step
+  subset_taxa(Class %in% c("Actinopteri", "Chondrichthyes")) %>% # Actinopteri only
+  filter_taxa(function (x) sum(x) > 0, TRUE)# Remove taxa that are no longer represented because of subsetting
+sample_data(eDNA_fish2.ps) <- sample_data(sample_data_renamed)
 
 eDNA_fish.MS.ps <- eDNA_fish.ps %>%
   subset_samples(Ecosystem %in% c("Seagrass","Mangrove")) %>% # Metazoan only
@@ -974,3 +1128,87 @@ eDNA_meta_bay <- deseq_wrapper(eDNA_meta.bay.ps, formula = ~ BayRegion)
 eDNA_meta_bay.var <- getVarianceStabilizedData(eDNA_meta_bay, blind = FALSE)
 eDNA_meta_bay_results <- results(eDNA_meta_bay)
 res_to_tsv(eDNA_meta_bay_results, alpha = 1, filename = "output/eDNA_meta_bay.tsv")
+
+
+# Species pool estimation & unique species calculation -------------------------
+
+eDNA_meta.ps
+
+edna_coral_tab <- subset_samples(eDNA_meta.ps, Ecosystem == "Coral reef") %>%
+  filter_taxa(function (x) sum(x) > 0, TRUE) %>%
+  otu_table() %>% 
+  vegan_otu()
+
+edna_mangrove_tab <- subset_samples(eDNA_meta.ps, Ecosystem == "Mangrove") %>%
+  filter_taxa(function (x) sum(x) > 0, TRUE) %>%
+  otu_table() %>% 
+  vegan_otu()
+
+edna_unveg_tab <- subset_samples(eDNA_meta.ps, Ecosystem == "Unvegetated") %>%
+  filter_taxa(function (x) sum(x) > 0, TRUE) %>%
+  otu_table() %>% 
+  vegan_otu()
+
+edna_seagrass_tab <- subset_samples(eDNA_meta.ps, Ecosystem == "Seagrass") %>%
+  filter_taxa(function (x) sum(x) > 0, TRUE) %>%
+  otu_table() %>% 
+  vegan_otu()
+
+edna_dock_tab <- subset_samples(eDNA_meta.ps, Ecosystem == "Dock") %>%
+  filter_taxa(function (x) sum(x) > 0, TRUE) %>%
+  otu_table() %>% 
+  vegan_otu()
+
+edna_meta_table_list <- list(edna_coral_tab, edna_mangrove_tab, edna_unveg_tab, edna_seagrass_tab, edna_dock_tab)
+
+meta_pools <- mclapply(edna_meta_table_list, poolaccum, mc.cores = 2)
+
+metacoral_pool <- meta_pools[[1]]
+metacoral_pool_df <- as.data.frame(metacoral_pool$means)
+metacoral_pool_df$Ecosystem <- rep("Coral reef", nrow(metacoral_pool_df))
+
+metasg_pool <- meta_pools[[4]]
+metasg_pool_df <- as.data.frame(metasg_pool$means)
+metasg_pool_df$Ecosystem <- rep("Seagrass", nrow(metasg_pool_df))
+
+metamg_pool <- meta_pools[[2]]
+metamg_pool_df <- as.data.frame(metamg_pool$means)
+metamg_pool_df$Ecosystem <- rep("Mangrove", nrow(metamg_pool_df))
+
+metauv_pool <- meta_pools[[3]]
+metauv_pool_df <- as.data.frame(metauv_pool$means)
+metauv_pool_df$Ecosystem <- rep("Unvegetated", nrow(metauv_pool_df))
+
+metadock_pool <- meta_pools[[5]]
+metadock_pool_df <- as.data.frame(metadock_pool$means)
+metadock_pool_df$Ecosystem <- rep("Dock", nrow(metadock_pool_df))
+
+meta_pool_df <- rbind(metacoral_pool_df, metasg_pool_df, metamg_pool_df, metauv_pool_df, metadock_pool_df)
+meta_pool_df <- group_by(meta_pool_df, Ecosystem)
+pool_S.p <- plot_ly(data = meta_pool_df, x = ~N, y = ~S, type = "scatter", mode = "lines", color = ~Ecosystem) %>%
+  layout(title = "Observed Diversity", xaxis = list(rangemode="tozero", title = "# Samples"), yaxis = list(rangemode="tozero", title = "Operational Taxonomic Units"))
+
+pool_Chao.p <- plot_ly(data = meta_pool_df, x = ~N, y = ~Chao, type = "scatter", mode = "lines", color = ~Ecosystem) %>%
+  layout(title = "Chao estimator", xaxis = list(rangemode="tozero", title = "# Samples"), yaxis = list(rangemode="tozero", title = "Operational Taxonomic Units"))
+
+
+pool_combined.p <- subplot(pool_S.p, pool_Chao.p, shareX=TRUE, shareY=TRUE)
+
+
+if (use_plotly_cloud) {
+  api_create(pool_S.p, filename = "bocas/edna/pools/S_accum", sharing = "secret") 
+  api_create(pool_Chao.p, filename = "bocas/edna/pools/Chao", sharing = "secret")
+  api_create(pool_combined.p, filename = "bocas/edna/pools/S-Chao", sharing = "secret")
+}
+
+mangrove_taxa <- colnames(edna_mangrove_tab)
+coral_taxa <- colnames(edna_coral_tab)
+sg_taxa <- colnames(edna_seagrass_tab)
+dock_taxa <- colnames(edna_dock_tab)
+uv_taxa <- colnames(edna_unveg_tab)
+
+library(VennDiagram)
+
+overlap <- calculate.overlap(x = list("Mangrove" = mangrove_taxa, "Seagrass" = sg_taxa, "Coral reef" = coral_taxa, "Dock" = dock_taxa, "Unvegetated" = uv_taxa))
+venn.diagram(x = list("Mangrove" = mangrove_taxa, "Seagrass" = sg_taxa, "Coral reef" = coral_taxa, "Dock" = dock_taxa, "Unvegetated" = uv_taxa), filename = "venn_diagram.png", margin = 0.1, fill = c("cornflowerblue", "green", "yellow", "darkorchid1", "red"), col = c("cornflowerblue", "green", "yellow", "darkorchid1", "red"))
+
