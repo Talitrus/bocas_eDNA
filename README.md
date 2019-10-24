@@ -4,6 +4,7 @@ BioRxiv preprint: https://www.biorxiv.org/content/10.1101/797712v1
 
 ## Authors
 Bryan N Nguyen†, Elaine W Shen†, Janina Seemann, Adrienne MS Correa, James L O’Donnell, Andrew H Altieri, Nancy Knowlton, Keith A Crandall, Scott P Egan, W Owen McMillan, Matthieu Leray
+
 † These authors contributed equally.
 
 ## Introduction
@@ -40,3 +41,23 @@ ATTATCTGGGATTCAGGCTCATTCCGGGGGTTCGGTAGATTTGGTTATTTTTAGTTTACATTTAGCGGGTATTTCTTCTA
 ```
 
 Chimeras were then detected and removed using DADA2's `removeBimeraDenovo()` function.
+
+### VSEARCH OTU clustering
+Sequence variants from DADA2 were checked for chimeras again with VSEARCH and clustered at 97% identity.
+
+### OTU curation with LULU
+OTUs from VSEARCH were then curated using LULU with the following parameters: `minimum_ratio_type = "min", minimum_ratio = 1, minimum_match = 84, minimum_relative_cooccurence = 0.95`.
+### Taxonomic assignment
+
+#### BLCA
+Sequence variants from DADA2 were assigned taxonomy using a [slightly modified version of BLCA](https://github.com/Talitrus/BLCA) forked from commit `fb2bd12`. Sequences were compared against the MIDORI UNIQUE database version 20180221. Hits needed to have a minimum identity score of 70 and a minimum coverage of 0.75 to be used.
+
+#### Iterative BLAST search
+OTUs that remained unidentified with BLCA were compared to the whole NCBI NT database (retrieved May 2018) using BLAST searches (word size = 7; max e-value = 5e-13) and assigned the taxonomic information of the lowest common ancestor of the top 100 hits.
+
+After this, OTU and taxonomy tables were combined into a single phyloseq object in R (`data/curated_Bocas_eDNA_phyloseq.rds` in this GitHub repository).
+
+## Organization
+This GitHub repository contains the code for the R analyses accompanying this project, downstream from the analyses described above. The file `edna_manuscript_minimal.R` contains the bulk of the primary analyses. The file `differential_abundance_heatmaps.R` contains the code for differential abundance analyses and heatmap figure generation. The file `frozen_sample_comparison.R` contains code for testing for differences in DNA extraction yield and PCR yield between frozen and freshly-filtered water samples.
+
+These scripts should run properly if you clone the repo and set the repo as the working directory in R when you run the R scripts.
