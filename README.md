@@ -1,6 +1,6 @@
 # Environmental DNA survey captures patterns of fish and invertebrate diversity across a tropical seascape
-
-BioRxiv preprint: https://www.biorxiv.org/content/10.1101/797712v1
+Published article:
+Nguyen, B.N., Shen, E.W., Seemann, J. et al. Environmental DNA survey captures patterns of fish and invertebrate diversity across a tropical seascape. Sci Rep 10, 6729 (2020). https://doi.org/10.1038/s41598-020-63565-9
 
 ## Authors
 Bryan N Nguyen†, Elaine W Shen†, Janina Seemann, Adrienne MS Correa, James L O’Donnell, Andrew H Altieri, Nancy Knowlton, Keith A Crandall, Scott P Egan, W Owen McMillan, Matthieu Leray
